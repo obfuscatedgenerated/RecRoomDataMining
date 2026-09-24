@@ -261,6 +261,23 @@ table.data tr.is-unset td { color: var(--muted); }
 .label-sharing p { margin: 4px 0; }
 .label-share { width: 100%; resize: vertical; margin-bottom: 4px; }
 
+/* Objects */
+.object-map-frame { background: var(--canvas); border-bottom: 1px solid var(--line-soft); height: 300px; }
+.object-map { width: 100%; height: 100%; display: block; }
+.map-dot { fill: var(--wire); opacity: 0.45; cursor: pointer; }
+.map-dot.is-in-group { opacity: 0.95; }
+.map-dot.is-selected { stroke: var(--selection-strong); stroke-width: 0.4%; opacity: 1; }
+.table-scroll { max-height: 420px; overflow: auto; }
+.location-cell { font-family: var(--font-data); color: var(--muted); white-space: nowrap; }
+.detail-panel { margin-top: 10px; }
+.detail-body { padding: 6px 8px; background: var(--field); border-bottom: 1px solid var(--line-soft); }
+
+/* Shapes */
+.shape-viewer { border-bottom: 1px solid var(--line); }
+.shape-canvas-frame { position: relative; height: 360px; background: var(--canvas); border-bottom: 1px solid var(--line-soft); }
+.shape-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.shape-canvas:active { cursor: grabbing; }
+
 /* Schema */
 .enum-values { columns: 3 200px; font-family: var(--font-data); font-size: 12px; padding: 8px; background: var(--field); }
 .enum-values div { break-inside: avoid; padding: 1px 0; }
@@ -1239,6 +1256,9 @@ const state = {
   circuits: { graphIndex: null, axis: "xy", selectedNodeId: null, selectedTypeKey: null, transform: null },
   chipLabels: {},
   schemaView: { query: "", selectedTypeName: null },
+  objects: { prefabKey: null, selectedIndex: null, limit: 200, filter: "", axis: "xz" },
+  shapeCameras: new Map(),
+  shapeSelection: new Map(),
 };
 
 // ---------------------------------------------------------------------------
@@ -1548,6 +1568,9 @@ function resetViews() {
   state.search = { ...state.search, results: null, truncated: false };
   state.collections = { pattern: state.analysis?.collections[0]?.pattern || null, filter: "", requiredFields: new Set(), limit: COLLECTION_PAGE_SIZE, presenceCache: new Map() };
   state.circuits = { graphIndex: null, axis: state.circuits.axis, selectedNodeId: null, selectedTypeKey: null, transform: null };
+  state.objects = { prefabKey: null, selectedIndex: null, limit: 200, filter: "", axis: state.objects.axis };
+  state.shapeCameras = new Map();
+  state.shapeSelection = new Map();
 }
 
 // ---------------------------------------------------------------------------
@@ -1561,8 +1584,8 @@ function navigateTo(path, highlightFieldNumber = null) {
   state.explorer.listFilter = "";
   state.explorer.guesses = null;
   state.tab = "explore";
+  state.resetScroll = true;
   render();
-  window.scrollTo({ top: 0 });
 }
 
 function openSchemaType(typeName) {
@@ -1639,6 +1662,7 @@ function renderTabs() {
   const hasDocument = Boolean(state.root);
   const tabDefinitions = [
     { id: "explore", label: "Explore", enabled: hasDocument },
+    { id: "objects", label: "Objects", enabled: hasDocument, count: hasDocument ? buildObjectModel().objects.length : undefined },
     { id: "collections", label: "Collections", enabled: hasDocument, count: state.analysis?.collections.length },
     { id: "circuits", label: "Circuits", enabled: hasDocument, count: hasDocument ? buildCircuitModel().graphs.filter((graph) => graph.nodes.length > 0).length : undefined },
     { id: "schema", label: "Schema", enabled: Boolean(state.schema), count: state.schema?.messages.size },
@@ -1651,6 +1675,7 @@ function renderTabs() {
       disabled: !tab.enabled,
       onclick: () => {
         state.tab = tab.id;
+        state.resetScroll = true;
         render();
       },
     }, tab.label, tab.count !== undefined ? el("span", { class: "tab-count" }, tab.count.toLocaleString()) : null)),
@@ -1882,7 +1907,7 @@ function renderMessageNode(node, path) {
       el("tbody", {}, rows)))
     : el("div", { class: "empty-note" }, "This message has no fields set. Every field is at its default value.");
 
-  const panel = el("div", { class: "panel" }, header, decodedNote, table);
+  const panel = el("div", { class: "panel" }, header, decodedNote, shapeViewerForExplore(message, path), table);
   requestAnimationFrame(() => panel.querySelector("tr.is-highlighted")?.scrollIntoView({ block: "center" }));
   return panel;
 }
@@ -3128,6 +3153,543 @@ function renderLabelSharing() {
 }
 
 // ---------------------------------------------------------------------------
+// Objects tab: every prefab placed in the room
+// ---------------------------------------------------------------------------
+
+const OBJECT_LIST_PAGE_SIZE = 200;
+let objectModelCache = null;
+
+function vectorOf(message) {
+  if (!(message instanceof DecodedMessage)) return null;
+  return { x: message.get("x") ?? 0, y: message.get("y") ?? 0, z: message.get("z") ?? 0 };
+}
+
+function formatVector(vector) {
+  return vector ? `(${formatNumber(vector.x)}, ${formatNumber(vector.y)}, ${formatNumber(vector.z)})` : "none";
+}
+
+function shapeMessagesOf(message) {
+  if (!(message instanceof DecodedMessage)) return [];
+  if (message.typeName === "rec_room.PersistenceViewData") return shapeMessagesOf(message.get("shape_container_data"));
+  if (message.typeName === "rec_room.ShapeContainerData") return shapeMessagesOf(message.get("shape_collection"));
+  if (message.typeName === "rec_room.ShapeDataCollectionData") return message.get("shapes") || [];
+  return [];
+}
+
+function buildObjectModel() {
+  if (objectModelCache && objectModelCache.root === state.root) return objectModelCache;
+  const objects = [];
+  walkMessage(state.root, {
+    onMessage(message, path) {
+      if (message.typeName !== "rec_room.PersistenceViewData") return;
+      const transform = message.get("transform");
+      const components = message.orderedEntries()
+        .map((entry) => (entry.field ? entry.field.name : `#${entry.number}`))
+        .filter((name) => !OBJECT_FIELDS_IGNORED_FOR_HINTS.has(name));
+      objects.push({
+        index: objects.length,
+        message,
+        path: copyPath(path),
+        prefabId: prefabIdOf(message),
+        position: vectorOf(transform?.get("position")),
+        rotation: transform?.get("quaternion_rotation") || null,
+        scale: transform?.get("scale") ?? null,
+        components,
+        shapeCount: shapeMessagesOf(message).length,
+      });
+    },
+  });
+
+  const groupsByKey = new Map();
+  for (const object of objects) {
+    const key = object.prefabId || "none";
+    if (!groupsByKey.has(key)) groupsByKey.set(key, { key, prefabId: object.prefabId, objects: [] });
+    groupsByKey.get(key).objects.push(object);
+  }
+  const groups = [...groupsByKey.values()].sort((first, second) => second.objects.length - first.objects.length);
+  objectModelCache = { root: state.root, objects, groups, groupsByKey };
+  return objectModelCache;
+}
+
+function groupLabel(group) {
+  if (!group.prefabId) return "No prefab ID";
+  return prefabNameFor(group.prefabId) || group.prefabId.slice(0, 13);
+}
+
+function objectLabel(object) {
+  const name = object.prefabId ? prefabNameFor(object.prefabId) : null;
+  return name || (object.prefabId ? object.prefabId.slice(0, 13) : "Object");
+}
+
+function renderObjects() {
+  const model = buildObjectModel();
+  if (model.objects.length === 0) return el("div", { class: "panel empty-note" }, "This file has no room objects.");
+
+  const selectedGroup = state.objects.prefabKey ? model.groupsByKey.get(state.objects.prefabKey) : null;
+  const sidebar = el("aside", { class: "panel sidebar" },
+    el("h3", {}, "Prefabs"),
+    el("div", { class: "sidebar-scroll" },
+      el("button", {
+        class: "result-item collection-item",
+        "aria-current": String(!selectedGroup),
+        onclick: () => selectObjectGroup(null),
+      },
+      el("span", { class: "collection-pattern" }, "All objects"),
+      el("span", { class: "collection-type" }, `${model.groups.length} prefabs`),
+      el("span", { class: "collection-count" }, model.objects.length.toLocaleString())),
+      model.groups.map((group) => el("button", {
+        class: "result-item collection-item",
+        "aria-current": String(group === selectedGroup),
+        onclick: () => selectObjectGroup(group.key),
+      },
+      el("span", { class: "collection-pattern" },
+        el("span", { class: "type-swatch", style: `background: hsl(${chipTypeHue(group.key)} 60% 55%)` }),
+        groupLabel(group)),
+      el("span", { class: "collection-type" }, group.prefabId && prefabNameFor(group.prefabId) ? group.prefabId.slice(0, 13) : group.prefabId ? "unnamed prefab" : "no spawnable_tool_data"),
+      el("span", { class: "collection-count" }, group.objects.length.toLocaleString())))),
+  );
+
+  return el("div", { class: "split" }, sidebar, renderObjectList(model, selectedGroup));
+}
+
+function selectObjectGroup(key) {
+  state.objects.prefabKey = key;
+  state.objects.selectedIndex = null;
+  state.objects.limit = OBJECT_LIST_PAGE_SIZE;
+  state.objects.filter = "";
+  render();
+}
+
+function selectObject(index) {
+  state.objects.selectedIndex = state.objects.selectedIndex === index ? null : index;
+  render();
+}
+
+function renderObjectMap(model, selectedGroup) {
+  const placed = model.objects.filter((object) => object.position);
+  if (placed.length === 0) return el("div", { class: "empty-note" }, "None of these objects have a saved position.");
+  const axis = state.objects.axis;
+  const project = (position) => (axis === "xy" ? { horizontal: position.x, vertical: -position.y } : { horizontal: position.x, vertical: -position.z });
+  const points = placed.map((object) => ({ object, ...project(object.position) }));
+  const horizontalValues = points.map((point) => point.horizontal);
+  const verticalValues = points.map((point) => point.vertical);
+  const minHorizontal = Math.min(...horizontalValues);
+  const minVertical = Math.min(...verticalValues);
+  const span = Math.max(Math.max(...horizontalValues) - minHorizontal, Math.max(...verticalValues) - minVertical, 1);
+  const padding = span * 0.04;
+  const radius = span * 0.006;
+
+  const svg = svgEl("svg", {
+    class: "object-map",
+    viewBox: `${minHorizontal - padding} ${minVertical - padding} ${Math.max(...horizontalValues) - minHorizontal + padding * 2} ${Math.max(...verticalValues) - minVertical + padding * 2}`,
+    preserveAspectRatio: "xMidYMid meet",
+    role: "img",
+    "aria-label": "Room objects seen from above",
+  });
+  const background = [];
+  const foreground = [];
+  for (const point of points) {
+    const inGroup = !selectedGroup || (point.object.prefabId || "none") === selectedGroup.key;
+    const isSelected = point.object.index === state.objects.selectedIndex;
+    const dot = svgEl("circle", {
+      cx: point.horizontal,
+      cy: point.vertical,
+      r: isSelected ? radius * 2.2 : inGroup && selectedGroup ? radius * 1.5 : radius,
+      class: `map-dot${inGroup ? " is-in-group" : ""}${isSelected ? " is-selected" : ""}`,
+      style: inGroup ? `fill: hsl(${chipTypeHue(point.object.prefabId || "none")} 60% 50%)` : null,
+    }, svgEl("title", {}, `${objectLabel(point.object)} ${formatVector(point.object.position)}`));
+    dot.addEventListener("click", () => selectObject(point.object.index));
+    (inGroup ? foreground : background).push(dot);
+  }
+  svg.append(...background, ...foreground);
+  return el("div", { class: "object-map-frame" }, svg);
+}
+
+function renderObjectList(model, selectedGroup) {
+  const objects = selectedGroup ? selectedGroup.objects : model.objects;
+  const filterText = state.objects.filter.trim().toLowerCase();
+  const matching = objects.filter((object) => !filterText
+    || objectLabel(object).toLowerCase().includes(filterText)
+    || object.components.some((name) => name.includes(filterText))
+    || pathToText(object.path).toLowerCase().includes(filterText));
+  const visible = matching.slice(0, state.objects.limit);
+  const selectedObject = state.objects.selectedIndex !== null ? model.objects[state.objects.selectedIndex] : null;
+
+  const axisSelect = el("select", {
+    class: "text-input",
+    "aria-label": "Map view",
+    onchange: (event) => {
+      state.objects.axis = event.target.value;
+      render();
+    },
+  }, [["xz", "Top (X, Z)"], ["xy", "Front (X, Y)"]].map(([value, label]) => el("option", { value, selected: state.objects.axis === value }, label)));
+
+  const rows = visible.map((object) => clickableRow(() => selectObject(object.index),
+    { class: object === selectedObject ? "is-highlighted" : "" },
+    el("td", { class: "location-cell" }, pathToText(object.path)),
+    selectedGroup ? null : el("td", {}, el("span", { class: "type-swatch", style: `background: hsl(${chipTypeHue(object.prefabId || "none")} 60% 55%)` }), objectLabel(object)),
+    el("td", {}, el("span", { class: "value kind-number" }, formatVector(object.position))),
+    el("td", {}, el("div", { class: "tag-list" }, object.components.map((name) => el("span", { class: "tag" }, name)))),
+    el("td", { class: "index-cell" }, object.shapeCount || ""),
+  ));
+
+  const remaining = matching.length - visible.length;
+  return el("div", { class: "node-view" },
+    el("div", { class: "panel" },
+      el("div", { class: "node-header" },
+        el("h2", { class: "node-title" }, selectedGroup ? groupLabel(selectedGroup) : "All objects"),
+        selectedGroup?.prefabId ? el("span", { class: "field-type" }, selectedGroup.prefabId) : null,
+        el("span", { class: "node-meta" }, `${objects.length.toLocaleString()} objects`),
+        el("div", { class: "node-actions" }, axisSelect),
+      ),
+      renderObjectMap(model, selectedGroup),
+      el("div", { class: "list-toolbar" }, el("input", {
+        class: "text-input",
+        type: "search",
+        placeholder: "Filter by prefab, component or location",
+        value: state.objects.filter,
+        "aria-label": "Filter objects",
+        oninput: (event) => {
+          state.objects.filter = event.target.value;
+          state.objects.limit = OBJECT_LIST_PAGE_SIZE;
+          rerenderPreservingFocus(".list-toolbar input");
+        },
+      })),
+      rows.length > 0
+        ? el("div", { class: "scroll-x table-scroll" }, el("table", { class: "data" },
+          el("thead", {}, el("tr", {},
+            el("th", {}, "Location"),
+            selectedGroup ? null : el("th", {}, "Prefab"),
+            el("th", {}, "Position"),
+            el("th", {}, "Components"),
+            el("th", {}, "Shapes"))),
+          el("tbody", {}, rows)))
+        : el("div", { class: "empty-note" }, "No objects match this filter."),
+      el("div", { class: "list-footer" },
+        `Showing ${visible.length.toLocaleString()} of ${matching.length.toLocaleString()}.`,
+        remaining > 0 ? el("button", {
+          class: "button is-small",
+          onclick: () => {
+            state.objects.limit += OBJECT_LIST_PAGE_SIZE;
+            render();
+          },
+        }, `Show ${Math.min(remaining, OBJECT_LIST_PAGE_SIZE)} more`) : null),
+    ),
+    selectedObject ? renderObjectDetail(selectedObject) : null,
+  );
+}
+
+function renderObjectDetail(object) {
+  const rotation = object.rotation instanceof DecodedMessage
+    ? `(${["x", "y", "z", "w"].map((name) => formatNumber(object.rotation.get(name) ?? 0)).join(", ")})`
+    : "none";
+  return el("div", { class: "panel detail-panel" },
+    el("div", { class: "node-header" },
+      el("h2", { class: "node-title" }, objectLabel(object)),
+      el("span", { class: "field-type" }, pathToText(object.path)),
+      el("div", { class: "node-actions" },
+        el("button", { class: "button is-small", onclick: () => navigateTo(object.path) }, "Open in Explore")),
+    ),
+    el("div", { class: "detail-body" },
+      el("dl", { class: "info-grid" },
+        el("dt", {}, "Prefab ID"), el("dd", {}, object.prefabId || "none"),
+        el("dt", {}, "Position"), el("dd", {}, formatVector(object.position)),
+        el("dt", {}, "Rotation (x, y, z, w)"), el("dd", {}, rotation),
+        el("dt", {}, "Scale"), el("dd", {}, object.scale === null ? "none" : formatNumber(object.scale)),
+        el("dt", {}, "Components"), el("dd", {}, object.components.join(", ") || "none"),
+      ),
+    ),
+    object.shapeCount > 0 ? renderShapeViewer(object.message, pathToText(object.path)) : null,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shape viewer: maker pen shapes drawn in 3D
+// ---------------------------------------------------------------------------
+
+const BOX_FACES = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+const SHAPE_LIGHT = normalizeVector([0.35, 0.85, 0.4]);
+
+function normalizeVector(vector) {
+  const length = Math.hypot(...vector) || 1;
+  return vector.map((component) => component / length);
+}
+
+function subtractVectors(first, second) {
+  return [first[0] - second[0], first[1] - second[1], first[2] - second[2]];
+}
+
+function dotVectors(first, second) {
+  return first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+}
+
+function crossVectors(first, second) {
+  return [first[1] * second[2] - first[2] * second[1], first[2] * second[0] - first[0] * second[2], first[0] * second[1] - first[1] * second[0]];
+}
+
+function multiplyMatrices(first, second) {
+  return first.map((row) => [0, 1, 2].map((column) => row[0] * second[0][column] + row[1] * second[1][column] + row[2] * second[2][column]));
+}
+
+function applyMatrix(matrix, vector) {
+  return matrix.map((row) => row[0] * vector[0] + row[1] * vector[1] + row[2] * vector[2]);
+}
+
+// Unity euler angles in degrees, applied Z, then X, then Y.
+function unityEulerMatrix(euler) {
+  const [x, y, z] = [euler.x, euler.y, euler.z].map((degrees) => (degrees * Math.PI) / 180);
+  const rotateX = [[1, 0, 0], [0, Math.cos(x), -Math.sin(x)], [0, Math.sin(x), Math.cos(x)]];
+  const rotateY = [[Math.cos(y), 0, Math.sin(y)], [0, 1, 0], [-Math.sin(y), 0, Math.cos(y)]];
+  const rotateZ = [[Math.cos(z), -Math.sin(z), 0], [Math.sin(z), Math.cos(z), 0], [0, 0, 1]];
+  return multiplyMatrices(rotateY, multiplyMatrices(rotateX, rotateZ));
+}
+
+// Unity is left-handed; flipping z gives a right-handed view without mirroring the scene.
+function toRenderSpace(unityPoint) {
+  return [unityPoint[0], unityPoint[1], -unityPoint[2]];
+}
+
+function shapeColorRgb(colorIndex) {
+  const hue = ((colorIndex * 47) % 360) / 360;
+  const saturation = 0.45;
+  const lightness = 0.6;
+  const channel = (offset) => {
+    const position = (hue * 12 + offset) % 12;
+    return lightness - saturation * Math.min(lightness, 1 - lightness) * Math.max(-1, Math.min(position - 3, 9 - position, 1));
+  };
+  return [channel(0), channel(8), channel(4)];
+}
+
+function parseShape(shape, index) {
+  const position = vectorOf(shape.get("current_local_position")) || { x: 0, y: 0, z: 0 };
+  const rotation = vectorOf(shape.get("current_local_rotation")) || { x: 0, y: 0, z: 0 };
+  const rawScale = shape.get("scale");
+  const scale = rawScale ? rawScale : 1;
+  const mesh = shape.get("mesh_shape_data");
+  const curve = shape.get("curve_shape_data");
+  const aspect = vectorOf(mesh?.get("aspect_ratio")) || vectorOf(mesh?.get("legacy_scale"));
+  const size = aspect && (aspect.x || aspect.y || aspect.z)
+    ? { x: (aspect.x || 1) * scale, y: (aspect.y || 1) * scale, z: (aspect.z || 1) * scale }
+    : { x: scale, y: scale, z: scale };
+  const controlPoints = (curve?.get("control_points") || []).map((point) => ({
+    position: vectorOf(point.get("position")) || { x: 0, y: 0, z: 0 },
+    radius: point.get("radius") ?? 0.05,
+  }));
+  return {
+    index,
+    type: shape.get("shape_type") ?? 0,
+    color: shape.get("shape_color") ?? 0,
+    material: shape.get("shape_material") ?? 0,
+    position,
+    rotation,
+    scale,
+    size,
+    isCurve: controlPoints.length > 0,
+    controlPoints,
+    flatShaded: curve?.get("flat_shaded") === true,
+  };
+}
+
+function buildShapeScene(shapes) {
+  const boxes = [];
+  const curves = [];
+  const allPoints = [];
+  for (const shape of shapes) {
+    const matrix = unityEulerMatrix(shape.rotation);
+    const origin = [shape.position.x, shape.position.y, shape.position.z];
+    const toWorld = (local) => toRenderSpace(applyMatrix(matrix, local).map((component, axis) => component + origin[axis]));
+    if (shape.isCurve) {
+      const points = shape.controlPoints.map((point) => ({
+        position: toWorld([point.position.x * shape.scale, point.position.y * shape.scale, point.position.z * shape.scale]),
+        radius: point.radius * shape.scale,
+      }));
+      curves.push({ shape, points });
+      allPoints.push(...points.map((point) => point.position));
+    } else {
+      const half = [shape.size.x / 2, shape.size.y / 2, shape.size.z / 2];
+      const corners = [];
+      for (const signX of [-1, 1]) for (const signY of [-1, 1]) for (const signZ of [-1, 1]) {
+        corners.push(toWorld([signX * half[0], signY * half[1], signZ * half[2]]));
+      }
+      boxes.push({ shape, corners, center: toRenderSpace(origin) });
+      allPoints.push(...corners);
+    }
+  }
+  const minimum = [0, 1, 2].map((axis) => Math.min(...allPoints.map((point) => point[axis])));
+  const maximum = [0, 1, 2].map((axis) => Math.max(...allPoints.map((point) => point[axis])));
+  const center = minimum.map((value, axis) => (value + maximum[axis]) / 2);
+  const radius = Math.max(Math.hypot(...subtractVectors(maximum, minimum)) / 2, 0.01);
+  return { boxes, curves, center, radius };
+}
+
+function drawShapeScene(canvas, scene, camera, selectedIndex) {
+  const pixelRatio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (!width || !height) return;
+  canvas.width = Math.round(width * pixelRatio);
+  canvas.height = Math.round(height * pixelRatio);
+  const context = canvas.getContext("2d");
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  context.clearRect(0, 0, width, height);
+
+  const fieldOfView = (50 * Math.PI) / 180;
+  const focal = height / 2 / Math.tan(fieldOfView / 2);
+  const target = scene.center;
+  const eye = [
+    target[0] + camera.distance * Math.cos(camera.pitch) * Math.sin(camera.yaw),
+    target[1] + camera.distance * Math.sin(camera.pitch),
+    target[2] + camera.distance * Math.cos(camera.pitch) * Math.cos(camera.yaw),
+  ];
+  const forward = normalizeVector(subtractVectors(target, eye));
+  const right = normalizeVector(crossVectors(forward, [0, 1, 0]));
+  const up = crossVectors(right, forward);
+  const toCamera = (point) => {
+    const offset = subtractVectors(point, eye);
+    return [dotVectors(offset, right), dotVectors(offset, up), dotVectors(offset, forward)];
+  };
+  const project = (cameraPoint) => [width / 2 + (cameraPoint[0] / cameraPoint[2]) * focal, height / 2 - (cameraPoint[1] / cameraPoint[2]) * focal];
+  const near = scene.radius * 0.01;
+
+  const drawables = [];
+  for (const box of scene.boxes) {
+    const base = shapeColorRgb(box.shape.color);
+    for (const face of BOX_FACES) {
+      const points = face.map((cornerIndex) => box.corners[cornerIndex]);
+      const faceCenter = [0, 1, 2].map((axis) => points.reduce((sum, point) => sum + point[axis], 0) / 4);
+      const normal = normalizeVector(subtractVectors(faceCenter, box.center));
+      if (dotVectors(normal, subtractVectors(faceCenter, eye)) >= 0) continue;
+      const cameraPoints = points.map(toCamera);
+      if (cameraPoints.some((point) => point[2] <= near)) continue;
+      const brightness = 0.55 + 0.45 * Math.max(0, dotVectors(normal, SHAPE_LIGHT));
+      drawables.push({
+        depth: cameraPoints.reduce((sum, point) => sum + point[2], 0) / 4,
+        draw: () => {
+          context.beginPath();
+          cameraPoints.map(project).forEach(([screenX, screenY], index) => (index ? context.lineTo(screenX, screenY) : context.moveTo(screenX, screenY)));
+          context.closePath();
+          context.fillStyle = `rgb(${base.map((channel) => Math.round(channel * brightness * 255)).join(",")})`;
+          context.fill();
+          const isSelected = box.shape.index === selectedIndex;
+          context.strokeStyle = isSelected ? getComputedStyle(canvas).getPropertyValue("--selection-strong") || "#3874b8" : "rgba(0, 0, 0, 0.35)";
+          context.lineWidth = isSelected ? 2 : 0.5;
+          context.stroke();
+        },
+      });
+    }
+  }
+  for (const curve of scene.curves) {
+    const base = shapeColorRgb(curve.shape.color);
+    const cameraPoints = curve.points.map((point) => ({ point: toCamera(point.position), radius: point.radius }));
+    for (let index = 0; index < cameraPoints.length - 1; index++) {
+      const start = cameraPoints[index];
+      const end = cameraPoints[index + 1];
+      if (start.point[2] <= near || end.point[2] <= near) continue;
+      const depth = (start.point[2] + end.point[2]) / 2;
+      drawables.push({
+        depth,
+        draw: () => {
+          const [startX, startY] = project(start.point);
+          const [endX, endY] = project(end.point);
+          context.beginPath();
+          context.moveTo(startX, startY);
+          context.lineTo(endX, endY);
+          context.lineCap = "round";
+          context.lineWidth = Math.max(1, ((start.radius + end.radius) * focal) / depth);
+          const isSelected = curve.shape.index === selectedIndex;
+          context.strokeStyle = isSelected ? "#3874b8" : `rgb(${base.map((channel) => Math.round(channel * 0.85 * 255)).join(",")})`;
+          context.stroke();
+        },
+      });
+    }
+  }
+  drawables.sort((first, second) => second.depth - first.depth);
+  for (const drawable of drawables) drawable.draw();
+
+  // Axis gizmo in the corner, Unity's axes: x red, y green, z blue.
+  const gizmoOrigin = [44, height - 44];
+  for (const [axis, color] of [[[1, 0, 0], "#d0453c"], [[0, 1, 0], "#3c9a3c"], [[0, 0, -1], "#3c6cd0"]]) {
+    const direction = [dotVectors(axis, right), dotVectors(axis, up)];
+    context.beginPath();
+    context.moveTo(...gizmoOrigin);
+    context.lineTo(gizmoOrigin[0] + direction[0] * 26, gizmoOrigin[1] - direction[1] * 26);
+    context.strokeStyle = color;
+    context.lineWidth = 2;
+    context.stroke();
+  }
+}
+
+function renderShapeViewer(message, key) {
+  const shapes = shapeMessagesOf(message).map(parseShape);
+  if (shapes.length === 0) return null;
+  const scene = buildShapeScene(shapes);
+  if (!state.shapeCameras.has(key)) state.shapeCameras.set(key, { yaw: -0.7, pitch: 0.45, distance: scene.radius * 2.6 });
+  const camera = state.shapeCameras.get(key);
+  const selectedIndex = state.shapeSelection.get(key) ?? null;
+
+  const canvas = el("canvas", { class: "shape-canvas", role: "img", "aria-label": `${shapes.length} maker pen shapes in 3D` });
+  const redraw = () => drawShapeScene(canvas, scene, camera, state.shapeSelection.get(key) ?? null);
+  let dragStart = null;
+  canvas.addEventListener("pointerdown", (event) => {
+    dragStart = { x: event.clientX, y: event.clientY, yaw: camera.yaw, pitch: camera.pitch };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!dragStart) return;
+    camera.yaw = dragStart.yaw - (event.clientX - dragStart.x) * 0.01;
+    camera.pitch = Math.max(-1.5, Math.min(1.5, dragStart.pitch + (event.clientY - dragStart.y) * 0.01));
+    redraw();
+  });
+  canvas.addEventListener("pointerup", () => { dragStart = null; });
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    camera.distance = Math.max(scene.radius * 0.2, Math.min(scene.radius * 20, camera.distance * Math.exp(event.deltaY * 0.001)));
+    redraw();
+  }, { passive: false });
+  canvas.addEventListener("dblclick", () => {
+    Object.assign(camera, { yaw: -0.7, pitch: 0.45, distance: scene.radius * 2.6 });
+    redraw();
+  });
+  requestAnimationFrame(redraw);
+  if (typeof ResizeObserver === "function") new ResizeObserver(redraw).observe(canvas);
+
+  const selectShape = (index) => {
+    state.shapeSelection.set(key, selectedIndex === index ? null : index);
+    render();
+  };
+  const rows = shapes.map((shape) => clickableRow(() => selectShape(shape.index),
+    { class: shape.index === selectedIndex ? "is-highlighted" : "" },
+    el("td", { class: "index-cell" }, shape.index),
+    el("td", {}, shape.isCurve ? `curve, ${shape.controlPoints.length} points` : `type ${shape.type}`),
+    el("td", {}, el("span", { class: "type-swatch", style: `background: rgb(${shapeColorRgb(shape.color).map((channel) => Math.round(channel * 255)).join(",")})` }), shape.color),
+    el("td", { class: "index-cell" }, shape.material),
+    el("td", {}, el("span", { class: "value kind-number" }, formatVector(shape.position))),
+    el("td", {}, el("span", { class: "value kind-number" }, formatVector(shape.rotation))),
+    el("td", {}, el("span", { class: "value kind-number" }, shape.isCurve ? `scale ${formatNumber(shape.scale)}` : `${formatNumber(shape.size.x)} × ${formatNumber(shape.size.y)} × ${formatNumber(shape.size.z)}`)),
+  ));
+
+  return el("div", { class: "shape-viewer" },
+    el("div", { class: "node-header" },
+      el("h2", { class: "node-title" }, `Shapes (${shapes.length})`),
+      el("span", { class: "node-meta" }, "Local to the object. Solid shapes are drawn as boxes of their size, and colours are approximate."),
+    ),
+    el("div", { class: "shape-canvas-frame" }, canvas, el("div", { class: "circuit-hint" }, "Drag to rotate, scroll to zoom, double-click to reset")),
+    el("div", { class: "scroll-x table-scroll" }, el("table", { class: "data" },
+      el("thead", {}, el("tr", {},
+        el("th", {}, "#"), el("th", {}, "Shape"), el("th", {}, "Colour"), el("th", {}, "Material"),
+        el("th", {}, "Position"), el("th", {}, "Rotation"), el("th", {}, "Size"))),
+      el("tbody", {}, rows))),
+  );
+}
+
+// Explore shows the viewer above the fields of any message that holds shapes.
+function shapeViewerForExplore(message, path) {
+  if (!["rec_room.PersistenceViewData", "rec_room.ShapeContainerData", "rec_room.ShapeDataCollectionData"].includes(message.typeName)) return null;
+  if (shapeMessagesOf(message).length === 0) return null;
+  return renderShapeViewer(message, pathToText(path));
+}
+
+// ---------------------------------------------------------------------------
 // Schema tab
 // ---------------------------------------------------------------------------
 
@@ -3234,8 +3796,34 @@ function renderSchemaType() {
 // Root render
 // ---------------------------------------------------------------------------
 
+// Re-rendering replaces the whole page, so remember where each scrolling list was and put it back.
+const SCROLL_CONTAINER_SELECTOR = ".sidebar-scroll, .table-scroll, .scroll-x";
+
+function saveScrollPositions() {
+  const positions = new Map();
+  document.querySelectorAll(SCROLL_CONTAINER_SELECTOR).forEach((container, index) => {
+    positions.set(container.dataset.scrollKey || `${index}`, { top: container.scrollTop, left: container.scrollLeft });
+  });
+  return { positions, windowTop: window.scrollY };
+}
+
+function restoreScrollPositions(saved, resetPage) {
+  document.querySelectorAll(SCROLL_CONTAINER_SELECTOR).forEach((container, index) => {
+    container.dataset.scrollKey = `${state.tab}:${index}`;
+    const position = saved.positions.get(container.dataset.scrollKey);
+    if (position && !(resetPage && !container.classList.contains("sidebar-scroll"))) {
+      container.scrollTop = position.top;
+      container.scrollLeft = position.left;
+    }
+  });
+  window.scrollTo({ top: resetPage ? 0 : saved.windowTop });
+}
+
 function render() {
   const app = document.getElementById("app");
+  const savedScroll = saveScrollPositions();
+  const resetPage = state.resetScroll === true;
+  state.resetScroll = false;
   if (!state.root && !(state.tab === "schema" && state.schema)) state.tab = "explore";
 
   let content;
@@ -3243,6 +3831,7 @@ function render() {
   else if (!state.root) content = renderIntro();
   else if (state.tab === "collections") content = renderCollections();
   else if (state.tab === "circuits") content = renderCircuits();
+  else if (state.tab === "objects") content = renderObjects();
   else content = renderExplore();
 
   app.replaceChildren(
@@ -3251,6 +3840,7 @@ function render() {
     el("footer", { class: `status-bar${state.status.isError ? " is-error" : ""}`, role: "status" },
       el("span", { class: "status-line" }, state.status.text || "Ready")),
   );
+  restoreScrollPositions(savedScroll, resetPage);
 }
 
 // ---------------------------------------------------------------------------
