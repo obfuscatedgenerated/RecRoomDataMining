@@ -1,0 +1,3353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Room Inspector</title>
+<style>
+:root {
+  --window: #e6e6e6;
+  --pane: #f7f7f7;
+  --field: #ffffff;
+  --pane-header: #dcdcdc;
+  --ink: #1d1d1d;
+  --muted: #666666;
+  --line: #bdbdbd;
+  --line-soft: #dddddd;
+  --selection: #cfe0f4;
+  --selection-strong: #3874b8;
+  --selection-ink: #ffffff;
+  --focus: #3874b8;
+  --error: #b3261e;
+  --ok: #2e6b30;
+  --type-string: #a31515;
+  --type-number: #09804f;
+  --type-enum: #7a4c00;
+  --type-bytes: #8a1f5c;
+  --type-guid: #1f6f86;
+  --type-message: #1d1d1d;
+  --wire: #9a9a9a;
+  --wire-active: #3874b8;
+  --chip-fill: #ffffff;
+  --chip-board: #eef2f8;
+  --canvas: #f0f0f0;
+  --canvas-grid: #e2e2e2;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Ubuntu, sans-serif;
+  --font-data: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --window: #282828;
+    --pane: #313131;
+    --field: #262626;
+    --pane-header: #3a3a3a;
+    --ink: #d4d4d4;
+    --muted: #999999;
+    --line: #1c1c1c;
+    --line-soft: #3d3d3d;
+    --selection: #2c4a6b;
+    --selection-strong: #3d7fc4;
+    --selection-ink: #ffffff;
+    --focus: #5a9be0;
+    --error: #f07167;
+    --ok: #7cc67f;
+    --type-string: #ce9178;
+    --type-number: #b5cea8;
+    --type-enum: #dcdcaa;
+    --type-bytes: #c586c0;
+    --type-guid: #4ec9b0;
+    --type-message: #d4d4d4;
+    --wire: #6b6b6b;
+    --wire-active: #5a9be0;
+    --chip-fill: #3a3a3a;
+    --chip-board: #33394a;
+    --canvas: #242424;
+    --canvas-grid: #2d2d2d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --window: #282828; --pane: #313131; --field: #262626; --pane-header: #3a3a3a; --ink: #d4d4d4; --muted: #999999;
+  --line: #1c1c1c; --line-soft: #3d3d3d; --selection: #2c4a6b; --selection-strong: #3d7fc4; --selection-ink: #ffffff;
+  --focus: #5a9be0; --error: #f07167; --ok: #7cc67f; --type-string: #ce9178; --type-number: #b5cea8; --type-enum: #dcdcaa;
+  --type-bytes: #c586c0; --type-guid: #4ec9b0; --type-message: #d4d4d4; --wire: #6b6b6b; --wire-active: #5a9be0;
+  --chip-fill: #3a3a3a; --chip-board: #33394a; --canvas: #242424; --canvas-grid: #2d2d2d; color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); height: 100%; }
+body { margin: 0; min-height: 100%; background: var(--window); color: var(--ink); font: 13px/1.4 var(--font-ui); }
+#app { min-height: 100vh; display: flex; flex-direction: column; }
+button, input, select, textarea { font: inherit; color: inherit; }
+code { font-family: var(--font-data); font-size: 12px; }
+:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+body.is-drag-over main { outline: 2px solid var(--selection-strong); outline-offset: -6px; }
+
+/* Toolbar and tabs */
+.app-header { background: var(--pane-header); border-bottom: 1px solid var(--line); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 10px; }
+.app-title { font-size: 13px; font-weight: 600; margin: 0 4px 0 0; white-space: nowrap; }
+.toolbar-divider { width: 1px; align-self: stretch; background: var(--line); margin: 2px 2px; }
+.file-slot { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
+.file-slot-role { color: var(--muted); white-space: nowrap; }
+.file-slot-name { font-family: var(--font-data); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.file-slot-detail { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.file-slot.is-missing .file-slot-name, .prefab-menu .file-slot-name:only-of-type { color: var(--muted); }
+.prefab-menu { position: relative; }
+.prefab-menu summary { display: inline-flex; gap: 5px; align-items: baseline; cursor: pointer; list-style: none; }
+.prefab-menu summary::-webkit-details-marker { display: none; }
+.prefab-menu summary::after { content: "▾"; color: var(--muted); font-size: 10px; }
+.prefab-menu-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: min(320px, 86vw); padding: 10px; background: var(--pane); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+.prefab-menu-panel p { margin: 0 0 8px; }
+.type-picker { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 220px; max-width: 380px; margin-left: auto; }
+.type-picker input { flex: 1; min-width: 0; }
+.button { border: 1px solid var(--line); background: var(--field); border-radius: 3px; padding: 2px 10px; cursor: pointer; white-space: nowrap; line-height: 18px; }
+.button:hover { background: var(--pane); }
+.button:active { background: var(--selection); }
+.button.is-primary { background: var(--selection-strong); border-color: var(--selection-strong); color: var(--selection-ink); }
+.button.is-primary:hover { filter: brightness(1.08); }
+.button.is-small { padding: 0 7px; font-size: 12px; }
+.text-input { border: 1px solid var(--line); background: var(--field); border-radius: 2px; padding: 2px 6px; font-family: var(--font-data); font-size: 12px; line-height: 18px; }
+.tabs { display: flex; gap: 0; padding: 0 6px; overflow-x: auto; }
+.tab { border: 1px solid transparent; border-bottom: none; background: none; padding: 4px 12px; cursor: pointer; color: var(--muted); margin-bottom: -1px; }
+.tab[aria-selected="true"] { background: var(--window); border-color: var(--line); color: var(--ink); }
+.tab:disabled { opacity: 0.5; cursor: default; }
+.tab-count { color: var(--muted); margin-left: 5px; font-size: 12px; }
+
+main { flex: 1; padding: 10px; min-width: 0; }
+.status-bar { position: sticky; bottom: 0; background: var(--pane-header); border-top: 1px solid var(--line); padding: 3px 10px calc(3px + env(safe-area-inset-bottom, 0px)); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-bar.is-error { color: var(--error); }
+
+/* Empty state */
+.empty-state { max-width: 760px; padding: 16px 6px; }
+.empty-state h2 { font-size: 15px; margin: 0 0 6px; }
+.empty-state p { margin: 0 0 12px; max-width: 70ch; }
+.file-table { background: var(--field); border: 1px solid var(--line); margin-bottom: 12px; }
+.status-ok { color: var(--ok); white-space: nowrap; }
+.status-missing { color: var(--muted); white-space: nowrap; }
+
+/* Panes */
+.panel { background: var(--pane); border: 1px solid var(--line); }
+.split { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 10px; align-items: start; }
+@media (max-width: 860px) { .split { grid-template-columns: minmax(0, 1fr); } }
+.sidebar { position: sticky; top: 76px; max-height: calc(100vh - 110px); display: flex; flex-direction: column; min-height: 0; }
+@media (max-width: 860px) { .sidebar { position: static; max-height: 380px; } }
+.sidebar > h3 { margin: 0; padding: 4px 8px; font-size: 12px; font-weight: 600; background: var(--pane-header); border-bottom: 1px solid var(--line); }
+.sidebar > form, .sidebar > .search-options, .sidebar > input { margin: 6px 8px 0; }
+.sidebar-scroll { overflow: auto; min-height: 0; flex: 1; margin-top: 6px; border-top: 1px solid var(--line-soft); background: var(--field); }
+.search-form { display: flex; gap: 4px; }
+.search-form input { flex: 1; min-width: 0; }
+.search-options { display: flex; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.search-options label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.result-item { display: block; width: 100%; text-align: left; border: none; background: none; padding: 3px 8px; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+.result-item:hover { background: var(--pane); }
+.result-item[aria-current="true"] { background: var(--selection-strong); color: var(--selection-ink); }
+.result-item[aria-current="true"] .collection-type, .result-item[aria-current="true"] .collection-count, .result-item[aria-current="true"] .result-path { color: inherit; opacity: 0.85; }
+.result-path { font-family: var(--font-data); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.result-text { font-family: var(--font-data); font-size: 12px; overflow-wrap: anywhere; }
+.result-note { font-size: 12px; color: var(--muted); padding: 4px 8px; background: var(--pane); border-bottom: 1px solid var(--line-soft); }
+
+/* Node view */
+.node-view { min-width: 0; }
+.breadcrumb { display: flex; flex-wrap: wrap; align-items: center; font-family: var(--font-data); font-size: 12px; margin-bottom: 6px; padding: 2px 4px; background: var(--field); border: 1px solid var(--line); }
+.crumb { border: none; background: none; padding: 1px 3px; cursor: pointer; color: var(--selection-strong); }
+.crumb:hover { text-decoration: underline; }
+.crumb[aria-current="page"] { color: var(--ink); cursor: default; text-decoration: none; }
+.crumb-separator { color: var(--muted); padding: 0 1px; }
+.node-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 5px 8px; background: var(--pane-header); border-bottom: 1px solid var(--line); }
+.node-title { font-size: 13px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.node-meta { color: var(--muted); font-size: 12px; }
+.node-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.node-actions label { font-size: 12px; color: var(--muted); display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.type-link { border: none; background: none; padding: 0; font-family: var(--font-data); font-size: 12px; color: var(--selection-strong); cursor: pointer; }
+.type-link:hover { text-decoration: underline; }
+.decoded-note { padding: 4px 8px; font-size: 12px; border-bottom: 1px solid var(--line-soft); background: var(--field); color: var(--muted); }
+
+.scroll-x { overflow-x: auto; background: var(--field); }
+table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.data th { text-align: left; font-weight: 600; color: var(--muted); padding: 3px 8px; border-bottom: 1px solid var(--line); background: var(--pane); white-space: nowrap; position: sticky; top: 0; }
+table.data th + th, table.data td + td { border-left: 1px solid var(--line-soft); }
+table.data td { padding: 2px 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+table.data tr.is-clickable { cursor: default; }
+table.data tr.is-clickable:hover td { background: var(--pane); }
+table.data tr.is-clickable:focus-visible { outline-offset: -1px; }
+table.data tr.is-highlighted td { background: var(--selection); }
+table.data tr.is-unset td { color: var(--muted); }
+.field-name { font-family: var(--font-data); white-space: nowrap; }
+.field-number { color: var(--muted); margin-left: 6px; }
+.field-type { font-family: var(--font-data); color: var(--muted); white-space: nowrap; }
+.field-oneof { display: block; font-size: 11px; }
+.value { font-family: var(--font-data); overflow-wrap: anywhere; }
+.value.kind-string { color: var(--type-string); }
+.value.kind-number, .value.kind-bool { color: var(--type-number); }
+.value.kind-enum { color: var(--type-enum); }
+.value.kind-bytes { color: var(--type-bytes); }
+.value.kind-guid { color: var(--type-guid); }
+.value.kind-message, .value.kind-list { color: var(--type-message); }
+.drill-mark { color: var(--muted); margin-left: 5px; font-size: 10px; }
+.index-cell { font-family: var(--font-data); color: var(--muted); width: 1%; white-space: nowrap; text-align: right; }
+.list-toolbar { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
+.list-toolbar input { flex: 1 1 200px; }
+.list-footer { padding: 4px 8px; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line-soft); }
+.empty-note { padding: 10px 8px; color: var(--muted); }
+
+/* Bytes */
+.bytes-section { padding: 8px; border-bottom: 1px solid var(--line-soft); }
+.bytes-section:last-child { border-bottom: none; }
+.bytes-section h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; }
+.decode-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.decode-row input { flex: 1 1 240px; }
+.guess-list { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+.hexdump { font-family: var(--font-data); font-size: 12px; line-height: 1.5; background: var(--field); border: 1px solid var(--line-soft); padding: 6px 8px; overflow-x: auto; white-space: pre; margin: 0; }
+.hexdump .hex-offset { color: var(--muted); }
+.hexdump .hex-ascii { color: var(--type-bytes); }
+.text-preview { font-family: var(--font-data); font-size: 12px; background: var(--field); border: 1px solid var(--line-soft); padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; max-height: 240px; overflow: auto; }
+
+/* Lists */
+.collection-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; }
+.collection-pattern { font-family: var(--font-data); font-size: 12px; overflow-wrap: anywhere; }
+.collection-type { font-size: 11px; color: var(--muted); }
+.collection-count { font-family: var(--font-data); font-size: 12px; color: var(--muted); grid-row: 1 / span 2; grid-column: 2; align-self: center; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--line-soft); }
+.field-chip { border: 1px solid var(--line); background: var(--field); border-radius: 2px; padding: 0 6px; font-family: var(--font-data); font-size: 11px; line-height: 18px; cursor: pointer; }
+.field-chip:hover { background: var(--pane); }
+.field-chip .chip-count { color: var(--muted); margin-left: 5px; }
+.field-chip[aria-pressed="true"] { background: var(--selection-strong); border-color: var(--selection-strong); color: var(--selection-ink); }
+.field-chip[aria-pressed="true"] .chip-count { color: inherit; opacity: 0.85; }
+.tag-list { font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+.tag + .tag::before { content: ", "; }
+
+/* Circuits */
+.circuit-toolbar { display: flex; gap: 8px; align-items: center; padding: 4px 8px; background: var(--pane-header); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.circuit-toolbar .toolbar-title { font-weight: 600; margin-right: auto; overflow-wrap: anywhere; }
+.circuit-canvas { position: relative; height: 62vh; min-height: 340px; overflow: hidden; touch-action: none; background-color: var(--canvas);
+  background-image: linear-gradient(var(--canvas-grid) 1px, transparent 1px), linear-gradient(90deg, var(--canvas-grid) 1px, transparent 1px); background-size: 24px 24px; }
+.circuit-canvas svg { width: 100%; height: 100%; display: block; cursor: grab; user-select: none; }
+.circuit-canvas svg.is-panning { cursor: grabbing; }
+.circuit-hint { position: absolute; left: 8px; bottom: 6px; font-size: 11px; color: var(--muted); pointer-events: none; }
+.chip-node rect:first-child { fill: var(--chip-fill); stroke: var(--line); stroke-width: 1; }
+.chip-node.is-board rect:first-child { fill: var(--chip-board); stroke-dasharray: 4 3; }
+.chip-node.is-type-match rect:first-child { stroke: var(--selection-strong); stroke-width: 2; stroke-dasharray: none; }
+.chip-node.is-linked rect:first-child { stroke: var(--wire-active); }
+.chip-node.is-selected rect:first-child { stroke: var(--selection-strong); stroke-width: 2.5; stroke-dasharray: none; }
+.chip-node text { font-family: var(--font-data); font-size: 12px; fill: var(--ink); pointer-events: none; }
+.chip-node .chip-sub { font-size: 10px; fill: var(--muted); }
+.chip-node { cursor: pointer; }
+.wire { fill: none; stroke: var(--wire); stroke-width: 1.4; }
+.wire.is-active { stroke: var(--wire-active); stroke-width: 2.4; }
+.circuit-info { padding: 8px; border-top: 1px solid var(--line); background: var(--field); }
+.circuit-info h3 { margin: 0 0 4px; font-size: 13px; overflow-wrap: anywhere; }
+.info-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; font-size: 12px; margin: 6px 0 8px; }
+.info-grid dt { color: var(--muted); }
+.info-grid dd { margin: 0; font-family: var(--font-data); overflow-wrap: anywhere; }
+.wire-list { margin: 0 0 8px; padding: 0; list-style: none; font-family: var(--font-data); font-size: 12px; }
+.wire-list li { padding: 1px 0; }
+.wire-list button { border: none; background: none; padding: 0; color: var(--selection-strong); cursor: pointer; font: inherit; }
+.wire-list button:hover { text-decoration: underline; }
+.graph-depth-1 { padding-left: 20px; }
+.graph-depth-2 { padding-left: 32px; }
+.graph-depth-3 { padding-left: 44px; }
+.graph-depth-deep { padding-left: 56px; }
+.type-swatch { display: inline-block; width: 8px; height: 8px; margin-right: 6px; vertical-align: baseline; border: 1px solid rgba(0, 0, 0, 0.25); }
+.type-editor { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.type-editor:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.type-editor .decode-row input { flex: 1 1 200px; }
+.label-sharing { margin: 8px; font-size: 12px; }
+.label-sharing summary { cursor: pointer; color: var(--muted); }
+.label-sharing p { margin: 4px 0; }
+.label-share { width: 100%; resize: vertical; margin-bottom: 4px; }
+
+/* Schema */
+.enum-values { columns: 3 200px; font-family: var(--font-data); font-size: 12px; padding: 8px; background: var(--field); }
+.enum-values div { break-inside: avoid; padding: 1px 0; }
+.enum-values span { color: var(--muted); display: inline-block; min-width: 3ch; margin-right: 8px; text-align: right; }
+
+.toast { position: fixed; right: 12px; bottom: calc(32px + env(safe-area-inset-bottom, 0px)); background: var(--pane); color: var(--ink); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); padding: 5px 10px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+.toast.is-visible { opacity: 1; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+// ---------------------------------------------------------------------------
+// Wire format reader
+// ---------------------------------------------------------------------------
+
+const WIRE_VARINT = 0;
+const WIRE_FIXED64 = 1;
+const WIRE_LENGTH_DELIMITED = 2;
+const WIRE_START_GROUP = 3;
+const WIRE_END_GROUP = 4;
+const WIRE_FIXED32 = 5;
+
+const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
+
+class DecodeError extends Error {}
+
+class ProtoReader {
+  constructor(bytes) {
+    this.bytes = bytes;
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.position = 0;
+  }
+
+  get done() {
+    return this.position >= this.bytes.length;
+  }
+
+  ensureAvailable(byteCount) {
+    if (this.position + byteCount > this.bytes.length) {
+      throw new DecodeError(`Unexpected end of data at byte ${this.position}`);
+    }
+  }
+
+  // Returns a Number while the value fits in 49 bits, otherwise a BigInt.
+  readVarint() {
+    const startPosition = this.position;
+    let result = 0;
+    let multiplier = 1;
+    for (let byteIndex = 0; byteIndex < 7; byteIndex++) {
+      this.ensureAvailable(1);
+      const byte = this.bytes[this.position++];
+      result += (byte & 0x7f) * multiplier;
+      if ((byte & 0x80) === 0) return result;
+      multiplier *= 128;
+    }
+    this.position = startPosition;
+    let bigResult = 0n;
+    let shift = 0n;
+    for (let byteIndex = 0; byteIndex < 10; byteIndex++) {
+      this.ensureAvailable(1);
+      const byte = this.bytes[this.position++];
+      bigResult |= BigInt(byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return bigResult;
+      shift += 7n;
+    }
+    throw new DecodeError(`Malformed varint at byte ${startPosition}`);
+  }
+
+  readFixed32() {
+    this.ensureAvailable(4);
+    const value = this.view.getUint32(this.position, true);
+    this.position += 4;
+    return value;
+  }
+
+  readFixed64() {
+    this.ensureAvailable(8);
+    const low = this.view.getUint32(this.position, true);
+    const high = this.view.getUint32(this.position + 4, true);
+    this.position += 8;
+    return (BigInt(high) << 32n) | BigInt(low);
+  }
+
+  readFloat32() {
+    this.ensureAvailable(4);
+    const value = this.view.getFloat32(this.position, true);
+    this.position += 4;
+    return value;
+  }
+
+  readFloat64() {
+    this.ensureAvailable(8);
+    const value = this.view.getFloat64(this.position, true);
+    this.position += 8;
+    return value;
+  }
+
+  readLengthDelimited() {
+    const length = Number(this.readVarint());
+    this.ensureAvailable(length);
+    const slice = this.bytes.subarray(this.position, this.position + length);
+    this.position += length;
+    return slice;
+  }
+
+  skipGroup(fieldNumber) {
+    while (!this.done) {
+      const tag = Number(this.readVarint());
+      const wireType = tag % 8;
+      if (wireType === WIRE_END_GROUP) {
+        if (Math.floor(tag / 8) !== fieldNumber) throw new DecodeError("Mismatched end group");
+        return;
+      }
+      this.readUnknownValue(wireType, Math.floor(tag / 8));
+    }
+    throw new DecodeError("Unterminated group");
+  }
+
+  readUnknownValue(wireType, fieldNumber) {
+    switch (wireType) {
+      case WIRE_VARINT: return this.readVarint();
+      case WIRE_FIXED64: return this.readFixed64();
+      case WIRE_LENGTH_DELIMITED: return this.readLengthDelimited();
+      case WIRE_FIXED32: return this.readFixed32();
+      case WIRE_START_GROUP: this.skipGroup(fieldNumber); return null;
+      default: throw new DecodeError(`Invalid wire type ${wireType}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Integer conversions
+// ---------------------------------------------------------------------------
+
+function toBigInt(value) {
+  return typeof value === "bigint" ? value : BigInt(value);
+}
+
+function bigIntToDisplayNumber(value) {
+  const asNumber = Number(value);
+  return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+}
+
+function toInt32(value) {
+  return typeof value === "bigint" ? Number(BigInt.asIntN(32, value)) : value | 0;
+}
+
+function toUint32(value) {
+  return typeof value === "bigint" ? Number(BigInt.asUintN(32, value)) : value >>> 0;
+}
+
+function toInt64(value) {
+  return typeof value === "bigint" ? bigIntToDisplayNumber(BigInt.asIntN(64, value)) : value;
+}
+
+function toUint64(value) {
+  return typeof value === "bigint" ? bigIntToDisplayNumber(BigInt.asUintN(64, value)) : value;
+}
+
+function zigZag32(value) {
+  const unsigned = toUint32(value);
+  return (unsigned >>> 1) ^ -(unsigned & 1);
+}
+
+function zigZag64(value) {
+  const unsigned = BigInt.asUintN(64, toBigInt(value));
+  return bigIntToDisplayNumber((unsigned >> 1n) ^ -(unsigned & 1n));
+}
+
+// ---------------------------------------------------------------------------
+// Schema model
+// ---------------------------------------------------------------------------
+
+const FieldType = {
+  DOUBLE: 1, FLOAT: 2, INT64: 3, UINT64: 4, INT32: 5, FIXED64: 6, FIXED32: 7, BOOL: 8,
+  STRING: 9, GROUP: 10, MESSAGE: 11, BYTES: 12, UINT32: 13, ENUM: 14, SFIXED32: 15,
+  SFIXED64: 16, SINT32: 17, SINT64: 18,
+};
+
+const FIELD_TYPE_NAMES = {
+  1: "double", 2: "float", 3: "int64", 4: "uint64", 5: "int32", 6: "fixed64", 7: "fixed32",
+  8: "bool", 9: "string", 10: "group", 11: "message", 12: "bytes", 13: "uint32", 14: "enum",
+  15: "sfixed32", 16: "sfixed64", 17: "sint32", 18: "sint64",
+};
+
+const LABEL_REPEATED = 3;
+
+function expectedWireType(fieldType) {
+  switch (fieldType) {
+    case FieldType.DOUBLE: case FieldType.FIXED64: case FieldType.SFIXED64:
+      return WIRE_FIXED64;
+    case FieldType.FLOAT: case FieldType.FIXED32: case FieldType.SFIXED32:
+      return WIRE_FIXED32;
+    case FieldType.STRING: case FieldType.BYTES: case FieldType.MESSAGE:
+      return WIRE_LENGTH_DELIMITED;
+    case FieldType.GROUP:
+      return WIRE_START_GROUP;
+    default:
+      return WIRE_VARINT;
+  }
+}
+
+function isPackableType(fieldType) {
+  return expectedWireType(fieldType) !== WIRE_LENGTH_DELIMITED && fieldType !== FieldType.GROUP;
+}
+
+// Minimal hand-written spec for descriptor.proto, used to bootstrap the real schema.
+const DESCRIPTOR_SPECS = (() => {
+  const enumValueSpec = { 1: { name: "name", kind: "string" }, 2: { name: "number", kind: "int32" } };
+  const enumSpec = {
+    1: { name: "name", kind: "string" },
+    2: { name: "value", kind: enumValueSpec, repeated: true },
+  };
+  const fieldOptionsSpec = { 2: { name: "packed", kind: "bool" } };
+  const fieldSpec = {
+    1: { name: "name", kind: "string" },
+    3: { name: "number", kind: "int32" },
+    4: { name: "label", kind: "int32" },
+    5: { name: "type", kind: "int32" },
+    6: { name: "type_name", kind: "string" },
+    8: { name: "options", kind: fieldOptionsSpec },
+    9: { name: "oneof_index", kind: "int32" },
+    10: { name: "json_name", kind: "string" },
+    17: { name: "proto3_optional", kind: "bool" },
+  };
+  const messageOptionsSpec = { 7: { name: "map_entry", kind: "bool" } };
+  const oneofSpec = { 1: { name: "name", kind: "string" } };
+  const messageSpec = {
+    1: { name: "name", kind: "string" },
+    2: { name: "field", kind: fieldSpec, repeated: true },
+    4: { name: "enum_type", kind: enumSpec, repeated: true },
+    7: { name: "options", kind: messageOptionsSpec },
+    8: { name: "oneof_decl", kind: oneofSpec, repeated: true },
+  };
+  messageSpec[3] = { name: "nested_type", kind: messageSpec, repeated: true };
+  const fileSpec = {
+    1: { name: "name", kind: "string" },
+    2: { name: "package", kind: "string" },
+    3: { name: "dependency", kind: "string", repeated: true },
+    4: { name: "message_type", kind: messageSpec, repeated: true },
+    5: { name: "enum_type", kind: enumSpec, repeated: true },
+    12: { name: "syntax", kind: "string" },
+  };
+  const fileSetSpec = { 1: { name: "file", kind: fileSpec, repeated: true } };
+  return { fileSetSpec };
+})();
+
+function decodeWithSpec(bytes, spec) {
+  const reader = new ProtoReader(bytes);
+  const result = {};
+  for (const fieldSpec of Object.values(spec)) {
+    if (fieldSpec.repeated) result[fieldSpec.name] = [];
+  }
+  while (!reader.done) {
+    const tag = Number(reader.readVarint());
+    const fieldNumber = Math.floor(tag / 8);
+    const wireType = tag % 8;
+    const fieldSpec = spec[fieldNumber];
+    if (!fieldSpec) {
+      reader.readUnknownValue(wireType, fieldNumber);
+      continue;
+    }
+    let value;
+    if (typeof fieldSpec.kind === "object") {
+      value = decodeWithSpec(reader.readLengthDelimited(), fieldSpec.kind);
+    } else if (fieldSpec.kind === "string") {
+      value = utf8Decoder.decode(reader.readLengthDelimited());
+    } else if (fieldSpec.kind === "int32") {
+      value = toInt32(reader.readVarint());
+    } else if (fieldSpec.kind === "bool") {
+      value = Number(reader.readVarint()) !== 0;
+    }
+    if (fieldSpec.repeated) result[fieldSpec.name].push(value);
+    else result[fieldSpec.name] = value;
+  }
+  return result;
+}
+
+class Schema {
+  constructor() {
+    this.messages = new Map();
+    this.enums = new Map();
+    this.files = [];
+  }
+
+  static fromDescriptorSetBytes(bytes) {
+    const fileSet = decodeWithSpec(bytes, DESCRIPTOR_SPECS.fileSetSpec);
+    if (fileSet.file.length === 0) throw new DecodeError("No files found in descriptor set");
+    const schema = new Schema();
+    for (const file of fileSet.file) {
+      if (!file.name) throw new DecodeError("Descriptor file entry has no name");
+      schema.addFile(file);
+    }
+    return schema;
+  }
+
+  addFile(file) {
+    const packagePrefix = file.package ? `${file.package}.` : "";
+    this.files.push({ name: file.name, packageName: file.package || "", dependencies: file.dependency });
+    for (const enumProto of file.enum_type) this.addEnum(enumProto, packagePrefix, file.name);
+    for (const messageProto of file.message_type) this.addMessage(messageProto, packagePrefix, file.name);
+  }
+
+  addEnum(enumProto, prefix, fileName) {
+    const fullName = prefix + enumProto.name;
+    const valuesByNumber = new Map();
+    for (const value of enumProto.value) {
+      if (!valuesByNumber.has(value.number)) valuesByNumber.set(value.number, value.name);
+    }
+    this.enums.set(fullName, {
+      kind: "enum",
+      fullName,
+      name: enumProto.name,
+      fileName,
+      values: enumProto.value.map((value) => ({ name: value.name, number: value.number })),
+      valuesByNumber,
+    });
+  }
+
+  addMessage(messageProto, prefix, fileName) {
+    const fullName = prefix + messageProto.name;
+    const oneofNames = messageProto.oneof_decl.map((oneof) => oneof.name);
+    const fields = messageProto.field.map((fieldProto) => {
+      const isSyntheticOneof = fieldProto.proto3_optional === true;
+      const hasRealOneof = fieldProto.oneof_index !== undefined && !isSyntheticOneof;
+      return {
+        name: fieldProto.name,
+        number: fieldProto.number,
+        type: fieldProto.type,
+        typeName: fieldProto.type_name ? fieldProto.type_name.replace(/^\./, "") : null,
+        repeated: fieldProto.label === LABEL_REPEATED,
+        oneofName: hasRealOneof ? oneofNames[fieldProto.oneof_index] : null,
+        explicitOptional: isSyntheticOneof,
+      };
+    });
+    const message = {
+      kind: "message",
+      fullName,
+      name: messageProto.name,
+      fileName,
+      fields,
+      fieldsByNumber: new Map(fields.map((field) => [field.number, field])),
+      isMapEntry: messageProto.options?.map_entry === true,
+    };
+    this.messages.set(fullName, message);
+    for (const nestedEnum of messageProto.enum_type) this.addEnum(nestedEnum, `${fullName}.`, fileName);
+    for (const nestedMessage of messageProto.nested_type) this.addMessage(nestedMessage, `${fullName}.`, fileName);
+  }
+
+  isMapField(field) {
+    if (!field.repeated || field.type !== FieldType.MESSAGE) return false;
+    return this.messages.get(field.typeName)?.isMapEntry === true;
+  }
+
+  describeFieldType(field) {
+    if (field.type === FieldType.MESSAGE || field.type === FieldType.ENUM) {
+      if (this.isMapField(field)) {
+        const entryType = this.messages.get(field.typeName);
+        const keyField = entryType.fieldsByNumber.get(1);
+        const valueField = entryType.fieldsByNumber.get(2);
+        return `map<${this.describeFieldType(keyField)}, ${this.describeFieldType(valueField)}>`;
+      }
+      return shortTypeName(field.typeName || "?");
+    }
+    return FIELD_TYPE_NAMES[field.type] || `type ${field.type}`;
+  }
+
+  // Guess the message type for a file from its name, e.g. persisted_room_data.binpb -> PersistedRoomData.
+  guessTypeForFileName(fileName) {
+    const baseName = fileName.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    let bestMatch = null;
+    for (const message of this.messages.values()) {
+      const normalized = message.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (normalized === baseName && !message.fullName.startsWith("google.")) {
+        if (!bestMatch || message.fullName.length < bestMatch.fullName.length) bestMatch = message;
+      }
+    }
+    return bestMatch ? bestMatch.fullName : null;
+  }
+}
+
+function shortTypeName(fullName) {
+  const lastDot = fullName.lastIndexOf(".");
+  return lastDot === -1 ? fullName : fullName.slice(lastDot + 1);
+}
+
+// ---------------------------------------------------------------------------
+// Decoded document model
+// ---------------------------------------------------------------------------
+
+class DecodedMessage {
+  constructor(messageType, bytes) {
+    this.type = messageType; // null when decoded without a schema
+    this.bytes = bytes;
+    this.fields = new Map(); // fieldNumber -> { number, field, values: [], wireType }
+  }
+
+  get typeName() {
+    return this.type ? this.type.fullName : "(raw)";
+  }
+
+  entry(fieldNumber, field, wireType) {
+    let entry = this.fields.get(fieldNumber);
+    if (!entry) {
+      entry = { number: fieldNumber, field, values: [], wireType };
+      this.fields.set(fieldNumber, entry);
+    }
+    return entry;
+  }
+
+  getEntryByName(fieldName) {
+    const field = this.type?.fields.find((candidate) => candidate.name === fieldName);
+    return field ? this.fields.get(field.number) || null : null;
+  }
+
+  get(fieldName) {
+    const entry = this.getEntryByName(fieldName);
+    if (!entry || entry.values.length === 0) return undefined;
+    return entry.field?.repeated ? entry.values : entry.values[entry.values.length - 1];
+  }
+
+  // Entries in schema declaration order, followed by unknown fields.
+  orderedEntries() {
+    const ordered = [];
+    if (this.type) {
+      for (const field of this.type.fields) {
+        const entry = this.fields.get(field.number);
+        if (entry) ordered.push(entry);
+      }
+    }
+    for (const entry of this.fields.values()) {
+      if (!entry.field) ordered.push(entry);
+    }
+    return ordered;
+  }
+}
+
+function decodeScalar(reader, field, schema) {
+  switch (field.type) {
+    case FieldType.DOUBLE: return reader.readFloat64();
+    case FieldType.FLOAT: return reader.readFloat32();
+    case FieldType.INT64: return toInt64(reader.readVarint());
+    case FieldType.UINT64: return toUint64(reader.readVarint());
+    case FieldType.INT32: return toInt32(reader.readVarint());
+    case FieldType.FIXED64: return bigIntToDisplayNumber(reader.readFixed64());
+    case FieldType.FIXED32: return reader.readFixed32();
+    case FieldType.BOOL: return Number(reader.readVarint()) !== 0;
+    case FieldType.UINT32: return toUint32(reader.readVarint());
+    case FieldType.SFIXED32: return reader.readFixed32() | 0;
+    case FieldType.SFIXED64: return bigIntToDisplayNumber(BigInt.asIntN(64, reader.readFixed64()));
+    case FieldType.SINT32: return zigZag32(reader.readVarint());
+    case FieldType.SINT64: return zigZag64(reader.readVarint());
+    case FieldType.ENUM: {
+      const number = toInt32(reader.readVarint());
+      const enumType = schema.enums.get(field.typeName);
+      return { enumNumber: number, enumName: enumType?.valuesByNumber.get(number) ?? null };
+    }
+    default:
+      throw new DecodeError(`Cannot decode field type ${field.type} as scalar`);
+  }
+}
+
+const MAX_NESTING_DEPTH = 200;
+
+function decodeMessage(bytes, messageType, schema, depth = 0) {
+  if (depth > MAX_NESTING_DEPTH) throw new DecodeError("Message nesting is too deep");
+  const reader = new ProtoReader(bytes);
+  const message = new DecodedMessage(messageType, bytes);
+
+  while (!reader.done) {
+    const tag = Number(reader.readVarint());
+    const fieldNumber = Math.floor(tag / 8);
+    const wireType = tag % 8;
+    if (fieldNumber === 0) throw new DecodeError(`Invalid field number 0 at byte ${reader.position}`);
+    const field = messageType?.fieldsByNumber.get(fieldNumber) || null;
+
+    if (!field) {
+      const value = reader.readUnknownValue(wireType, fieldNumber);
+      if (value !== null) message.entry(fieldNumber, null, wireType).values.push(value);
+      continue;
+    }
+
+    const entry = message.entry(fieldNumber, field, wireType);
+    const expected = expectedWireType(field.type);
+
+    if (field.type === FieldType.GROUP) {
+      reader.skipGroup(fieldNumber);
+    } else if (wireType === WIRE_LENGTH_DELIMITED && field.repeated && isPackableType(field.type)) {
+      const packedReader = new ProtoReader(reader.readLengthDelimited());
+      while (!packedReader.done) entry.values.push(decodeScalar(packedReader, field, schema));
+    } else if (wireType !== expected) {
+      throw new DecodeError(`Field ${field.name} has wire type ${wireType}, expected ${expected}`);
+    } else if (field.type === FieldType.MESSAGE) {
+      const nestedType = schema.messages.get(field.typeName) || null;
+      entry.values.push(decodeMessage(reader.readLengthDelimited(), nestedType, schema, depth + 1));
+    } else if (field.type === FieldType.STRING) {
+      entry.values.push(utf8Decoder.decode(reader.readLengthDelimited()));
+    } else if (field.type === FieldType.BYTES) {
+      entry.values.push(reader.readLengthDelimited());
+    } else {
+      entry.values.push(decodeScalar(reader, field, schema));
+    }
+  }
+  return message;
+}
+
+// ---------------------------------------------------------------------------
+// Value helpers
+// ---------------------------------------------------------------------------
+
+const GUID_MESSAGE_TYPES = new Set(["core.GuidData", "circuits.Id128Data"]);
+const GUID_FIELD_NAME_PATTERN = /(^|_)(id|ids|guid|guids)$|_id_|Id$|Guid$/i;
+const NAME_FIELD_CANDIDATES = [
+  "name", "node_name", "display_name", "role_name", "title", "label", "event_name", "message_name",
+  "friendly_name", "prefab_name", "stat_name", "score_name", "welcome_mat_name", "blob_name",
+  "filename", "image_name", "property_name", "key", "text",
+];
+const VECTOR_COMPONENT_NAMES = ["x", "y", "z", "w", "r", "g", "b", "a"];
+
+// Set by the UI when a PrefabIds.csv is loaded: GUID string -> prefab type name.
+let prefabNameResolver = () => null;
+
+function setPrefabNameResolver(resolver) {
+  prefabNameResolver = resolver;
+}
+
+function prefabNameForBytes(bytes) {
+  const guid = bytes instanceof Uint8Array ? bytesToGuidString(bytes) : null;
+  return guid ? prefabNameResolver(guid) : null;
+}
+
+function bytesToGuidString(bytes) {
+  if (!bytes || bytes.length !== 16) return null;
+  const hex = [];
+  const order = [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+  for (const index of order) hex.push(bytes[index].toString(16).padStart(2, "0"));
+  const joined = hex.join("");
+  return `${joined.slice(0, 8)}-${joined.slice(8, 12)}-${joined.slice(12, 16)}-${joined.slice(16, 20)}-${joined.slice(20)}`;
+}
+
+function bytesToHex(bytes, maxLength = bytes.length) {
+  const parts = [];
+  const length = Math.min(bytes.length, maxLength);
+  for (let index = 0; index < length; index++) parts.push(bytes[index].toString(16).padStart(2, "0"));
+  return parts.join(" ");
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize));
+  }
+  return typeof btoa === "function" ? btoa(binary) : Buffer.from(binary, "binary").toString("base64");
+}
+
+function isGuidMessage(message) {
+  if (!message.type) return false;
+  if (GUID_MESSAGE_TYPES.has(message.type.fullName)) return true;
+  const fields = message.type.fields;
+  return fields.length === 1 && fields[0].name === "value" && fields[0].type === FieldType.BYTES;
+}
+
+function guidFromMessage(message) {
+  if (!isGuidMessage(message)) return null;
+  const value = message.get("value");
+  if (!value || value.length === 0) return "(empty guid)";
+  return bytesToGuidString(value) || bytesToHex(value);
+}
+
+function looksLikeGuidBytes(field, bytes) {
+  return bytes.length === 16 && field !== null && GUID_FIELD_NAME_PATTERN.test(field.name);
+}
+
+function formatNumber(value) {
+  if (typeof value !== "number") return String(value);
+  if (Number.isInteger(value)) return String(value);
+  return String(Number(value.toPrecision(6)));
+}
+
+function truncateText(text, maxLength) {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function isVectorMessage(message) {
+  if (!message.type || message.type.fields.length < 2 || message.type.fields.length > 4) return false;
+  return message.type.fields.every(
+    (field) => VECTOR_COMPONENT_NAMES.includes(field.name) && (field.type === FieldType.FLOAT || field.type === FieldType.DOUBLE),
+  );
+}
+
+function summarizeScalar(value, field) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return JSON.stringify(truncateText(value, 90));
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number") return formatNumber(value);
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Uint8Array) {
+    const guid = field && looksLikeGuidBytes(field, value) ? bytesToGuidString(value) : null;
+    if (guid) {
+      const prefabName = prefabNameResolver(guid);
+      return prefabName ? `${prefabName} (${guid})` : guid;
+    }
+    if (value.length === 0) return "empty bytes";
+    return `${value.length} bytes: ${bytesToHex(value, 12)}${value.length > 12 ? " …" : ""}`;
+  }
+  if (typeof value === "object" && "enumNumber" in value) {
+    return value.enumName ? `${value.enumName}` : `${value.enumNumber} (unknown enum value)`;
+  }
+  return String(value);
+}
+
+function summarizeMessage(message) {
+  const guid = guidFromMessage(message);
+  if (guid) return guid;
+
+  if (isVectorMessage(message)) {
+    const components = message.type.fields.map((field) => formatNumber(message.get(field.name) ?? 0));
+    return `(${components.join(", ")})`;
+  }
+
+  if (message.type?.isMapEntry) {
+    const keyEntry = message.fields.get(1);
+    const valueEntry = message.fields.get(2);
+    const keyText = keyEntry ? summarizeValue(keyEntry.values[0], keyEntry.field) : "(default key)";
+    const valueText = valueEntry ? summarizeValue(valueEntry.values[0], valueEntry.field) : "(default)";
+    return `${keyText} → ${valueText}`;
+  }
+
+  if (message.type) {
+    for (const candidate of NAME_FIELD_CANDIDATES) {
+      const value = message.get(candidate);
+      if (typeof value === "string" && value.length > 0) return JSON.stringify(truncateText(value, 70));
+    }
+  }
+
+  const positionText = positionSummary(message);
+  const prefabName = prefabNameForBytes(message.get("spawnable_tool_data")?.get("prefab_id"));
+  if (prefabName) return positionText ? `${prefabName} ${positionText}` : prefabName;
+  if (positionText) return positionText;
+
+  const entries = message.orderedEntries();
+  if (entries.length === 0) return "empty";
+  const names = entries.map((entry) => (entry.field ? entry.field.name : `#${entry.number}`));
+  const shown = names.slice(0, 3).join(", ");
+  return names.length > 3 ? `{ ${shown} +${names.length - 3} }` : `{ ${shown} }`;
+}
+
+// Objects with a transform or position get summarized by where they are.
+function positionSummary(message) {
+  if (!message.type) return null;
+  let holder = message;
+  const transform = message.get("transform") || message.get("transform_data");
+  if (transform instanceof DecodedMessage) holder = transform;
+  const position = holder.get("position") || holder.get("local_position");
+  if (!(position instanceof DecodedMessage) || !isVectorMessage(position)) return null;
+  return `at ${summarizeMessage(position)}`;
+}
+
+function summarizeValue(value, field) {
+  if (value instanceof DecodedMessage) return summarizeMessage(value);
+  return summarizeScalar(value, field);
+}
+
+function valueKind(value) {
+  if (value instanceof DecodedMessage) return "message";
+  if (value instanceof Uint8Array) return "bytes";
+  if (typeof value === "string") return "string";
+  if (typeof value === "boolean") return "bool";
+  if (typeof value === "number" || typeof value === "bigint") return "number";
+  if (value && typeof value === "object" && "enumNumber" in value) return "enum";
+  return "other";
+}
+
+// Converts a decoded value to plain JSON-friendly data.
+function toPlainValue(value, field) {
+  if (value instanceof DecodedMessage) return toPlainMessage(value);
+  if (value instanceof Uint8Array) {
+    if (field && looksLikeGuidBytes(field, value)) return bytesToGuidString(value);
+    return value.length <= 32 ? `hex:${bytesToHex(value).replace(/ /g, "")}` : `base64:${bytesToBase64(value)}`;
+  }
+  if (typeof value === "bigint") return value.toString();
+  if (value && typeof value === "object" && "enumNumber" in value) return value.enumName ?? value.enumNumber;
+  return value;
+}
+
+function toPlainMessage(message) {
+  const guid = guidFromMessage(message);
+  if (guid) return guid;
+  const result = {};
+  for (const entry of message.orderedEntries()) {
+    const key = entry.field ? entry.field.name : `#${entry.number}`;
+    if (entry.field && message.type && isMapEntryField(entry)) {
+      const mapObject = {};
+      for (const pair of entry.values) {
+        const keyEntry = pair.fields.get(1);
+        const valueEntry = pair.fields.get(2);
+        const mapKey = keyEntry ? String(toPlainValue(keyEntry.values[0], keyEntry.field)) : "";
+        mapObject[mapKey] = valueEntry ? toPlainValue(valueEntry.values[0], valueEntry.field) : null;
+      }
+      result[key] = mapObject;
+    } else if (!entry.field || entry.field.repeated) {
+      result[key] = entry.values.map((value) => toPlainValue(value, entry.field));
+    } else {
+      result[key] = toPlainValue(entry.values[entry.values.length - 1], entry.field);
+    }
+  }
+  return result;
+}
+
+function isMapEntryField(entry) {
+  const firstValue = entry.values[0];
+  return firstValue instanceof DecodedMessage && firstValue.type?.isMapEntry === true;
+}
+
+// ---------------------------------------------------------------------------
+// Paths and traversal
+// ---------------------------------------------------------------------------
+
+// A path is a list of steps from the root message:
+//   { fieldNumber, index, name }  index = -1 means the whole repeated list
+//   { decodeAs: "type.Name" | "" } decode the bytes at the current position ("" = no schema)
+
+const decodedBytesCache = new WeakMap();
+
+function decodeBytesAs(bytes, typeName, schema) {
+  let cacheForBytes = decodedBytesCache.get(bytes);
+  if (!cacheForBytes) {
+    cacheForBytes = new Map();
+    decodedBytesCache.set(bytes, cacheForBytes);
+  }
+  if (!cacheForBytes.has(typeName)) {
+    const messageType = typeName ? schema.messages.get(typeName) : null;
+    if (typeName && !messageType) throw new DecodeError(`Unknown message type ${typeName}`);
+    cacheForBytes.set(typeName, decodeMessage(bytes, messageType, schema));
+  }
+  return cacheForBytes.get(typeName);
+}
+
+function resolvePath(rootMessage, path, schema) {
+  let node = { kind: "message", value: rootMessage, field: null };
+  for (const step of path) {
+    if (step.decodeAs !== undefined) {
+      if (node.kind !== "bytes") throw new DecodeError("Only bytes can be decoded");
+      node = { kind: "message", value: decodeBytesAs(node.value, step.decodeAs, schema), field: null, decodedAs: step.decodeAs };
+      continue;
+    }
+    if (node.kind !== "message") throw new DecodeError("Path step does not point into a message");
+    const entry = node.value.fields.get(step.fieldNumber);
+    if (!entry) throw new DecodeError(`Field ${step.name} is not present`);
+    if (step.index === -1) {
+      node = { kind: "list", value: entry, field: entry.field };
+      continue;
+    }
+    const value = entry.values[step.index];
+    if (value === undefined) throw new DecodeError(`Index ${step.index} is out of range`);
+    node = { kind: valueKind(value) === "message" ? "message" : valueKind(value) === "bytes" ? "bytes" : "scalar", value, field: entry.field };
+  }
+  return node;
+}
+
+function makeStep(entry, index) {
+  const repeated = entry.field ? entry.field.repeated : entry.values.length > 1;
+  return { fieldNumber: entry.number, index, name: entry.field ? entry.field.name : `#${entry.number}`, repeated };
+}
+
+function pathToText(path) {
+  let text = "";
+  for (const step of path) {
+    if (step.decodeAs !== undefined) {
+      text += ` as ${step.decodeAs ? shortTypeName(step.decodeAs) : "raw"}`;
+    } else if (step.index === -1) {
+      text += `${text ? "." : ""}${step.name}`;
+    } else if (step.repeated) {
+      text += `${text ? "." : ""}${step.name}[${step.index}]`;
+    } else {
+      text += `${text ? "." : ""}${step.name}`;
+    }
+  }
+  return text || "root";
+}
+
+// Depth-first traversal. The visitor receives a shared, mutable path array; copy it to keep it.
+function walkMessage(message, visitor, path = []) {
+  if (visitor.onMessage) visitor.onMessage(message, path);
+  for (const entry of message.orderedEntries()) {
+    const repeated = entry.field ? entry.field.repeated : entry.values.length > 1;
+    if (visitor.onEntry) visitor.onEntry(message, entry, path);
+    for (let index = 0; index < entry.values.length; index++) {
+      const value = entry.values[index];
+      const step = { fieldNumber: entry.number, index: repeated ? index : 0, name: entry.field ? entry.field.name : `#${entry.number}`, repeated };
+      path.push(step);
+      if (visitor.onValue) visitor.onValue(value, entry, path);
+      if (value instanceof DecodedMessage) walkMessage(value, visitor, path);
+      path.pop();
+    }
+  }
+}
+
+function copyPath(path) {
+  return path.map((step) => ({ ...step }));
+}
+
+// One pass over the document that gathers everything the overview tabs need.
+function analyzeDocument(rootMessage) {
+  const typeCounts = new Map();
+  const collections = new Map();
+  const circuitGraphs = [];
+  let messageCount = 0;
+
+  walkMessage(rootMessage, {
+    onMessage(message, path) {
+      messageCount++;
+      typeCounts.set(message.typeName, (typeCounts.get(message.typeName) || 0) + 1);
+      if (message.typeName === "circuits_v2.CircuitGraphData") {
+        circuitGraphs.push({ path: copyPath(path), message });
+      }
+    },
+    onEntry(message, entry, path) {
+      if (!entry.field || !entry.field.repeated || entry.values.length === 0) return;
+      if (!(entry.values[0] instanceof DecodedMessage)) return;
+      if (entry.values[0].type?.isMapEntry) return;
+      const patternParts = path.map((step) => (step.repeated ? `${step.name}[*]` : step.name));
+      patternParts.push(entry.field.name);
+      const pattern = patternParts.join(".");
+      let collection = collections.get(pattern);
+      if (!collection) {
+        collection = { pattern, typeName: entry.field.typeName, items: [] };
+        collections.set(pattern, collection);
+      }
+      const parentPath = copyPath(path);
+      for (let index = 0; index < entry.values.length; index++) {
+        collection.items.push({ parentPath, entry, index, message: entry.values[index] });
+      }
+    },
+  });
+
+  return { typeCounts, collections: [...collections.values()], circuitGraphs, messageCount };
+}
+
+function collectionItemPath(item) {
+  return [...item.parentPath, makeStep(item.entry, item.index)];
+}
+
+// Search across field names, type names and values.
+function searchDocument(rootMessage, query, options = {}) {
+  const limit = options.limit || 500;
+  const needle = query.trim().toLowerCase();
+  const results = [];
+  if (!needle) return { results, truncated: false };
+  let truncated = false;
+
+  const numericNeedle = /^-?\d+(\.\d+)?$/.test(needle) ? Number(needle) : null;
+
+  function addResult(kind, path, entry, text) {
+    if (results.length >= limit) {
+      truncated = true;
+      return;
+    }
+    results.push({ kind, path: copyPath(path), fieldNumber: entry ? entry.number : null, text });
+  }
+
+  walkMessage(rootMessage, {
+    onMessage(message, path) {
+      if (truncated || !options.includeTypes) return;
+      if (message.type && message.type.name.toLowerCase().includes(needle)) {
+        addResult("type", path, null, message.type.fullName);
+      }
+    },
+    onValue(value, entry, path) {
+      if (truncated) return;
+      const parentPath = path.slice(0, -1);
+      const fieldName = entry.field ? entry.field.name : `#${entry.number}`;
+      const isFirstValue = path[path.length - 1].index === 0;
+      if (options.includeNames && isFirstValue && fieldName.toLowerCase().includes(needle)) {
+        addResult("field", parentPath, entry, fieldName);
+        return;
+      }
+      if (value instanceof DecodedMessage) {
+        const guid = guidFromMessage(value);
+        if (guid && guid.includes(needle)) addResult("value", parentPath, entry, `${fieldName} = ${guid}`);
+        return;
+      }
+      let text = null;
+      if (typeof value === "string") text = value;
+      else if (value instanceof Uint8Array && entry.field && looksLikeGuidBytes(entry.field, value)) {
+        const guid = bytesToGuidString(value);
+        const prefabName = guid ? prefabNameResolver(guid) : null;
+        text = prefabName ? `${prefabName} ${guid}` : guid;
+      }
+      else if (value && typeof value === "object" && "enumName" in value) text = value.enumName || String(value.enumNumber);
+      else if (numericNeedle !== null && (typeof value === "number" || typeof value === "bigint")) {
+        if (Number(value) === numericNeedle) addResult("value", parentPath, entry, `${fieldName} = ${formatNumber(value)}`);
+        return;
+      }
+      if (text && text.toLowerCase().includes(needle)) {
+        addResult("value", parentPath, entry, `${fieldName} = ${truncateText(text, 120)}`);
+      }
+    },
+  });
+
+  return { results, truncated };
+}
+
+// Try every message type against some bytes and rank the ones that decode cleanly.
+function guessMessageTypes(bytes, schema, limit = 8) {
+  const candidates = [];
+  if (bytes.length === 0 || bytes.length > 512 * 1024) return candidates;
+  for (const messageType of schema.messages.values()) {
+    if (messageType.fullName.startsWith("google.") || messageType.isMapEntry) continue;
+    try {
+      const message = decodeMessage(bytes, messageType, schema);
+      let knownFields = 0;
+      let unknownFields = 0;
+      walkMessage(message, {
+        onEntry(owner, entry) {
+          if (entry.field) knownFields++;
+          else unknownFields++;
+        },
+      });
+      if (knownFields === 0 || unknownFields > 0) continue;
+      candidates.push({ typeName: messageType.fullName, knownFields, coverage: message.fields.size / messageType.fields.length });
+    } catch (error) {
+      // Not a match.
+    }
+  }
+  candidates.sort((first, second) => second.knownFields - first.knownFields || second.coverage - first.coverage);
+  return candidates.slice(0, limit);
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    ProtoReader, Schema, DecodedMessage, DecodeError, FieldType, decodeMessage, decodeBytesAs, resolvePath,
+    analyzeDocument, searchDocument, summarizeValue, summarizeMessage, toPlainMessage, toPlainValue,
+    bytesToGuidString, guidFromMessage, pathToText, collectionItemPath, guessMessageTypes, walkMessage,
+  };
+}
+
+</script>
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+const LIST_PAGE_SIZE = 250;
+const COLLECTION_PAGE_SIZE = 200;
+const SCHEMA_LIST_LIMIT = 400;
+const HEX_DUMP_LIMIT = 4096;
+const CIRCUIT_CHIP_WIDTH = 170;
+const CIRCUIT_CHIP_HEIGHT = 40;
+const GENERIC_CHIP_FIELDS = new Set([
+  "node_id", "node_type", "node_name", "invention_data", "transform_data", "node_groups",
+  "maker_pen_interaction_filter", "is_frozen", "color_data", "circuit_links", "internal_graph_data",
+]);
+
+const state = {
+  schema: null,
+  schemaFileName: null,
+  prefabNames: new Map(),
+  bundledPrefabNames: new Map(),
+  prefabFileName: null,
+  bundledSources: { schema: null, prefabs: null, data: null },
+  dataBytes: null,
+  dataFileName: null,
+  rootTypeName: null,
+  root: null,
+  analysis: null,
+  tab: "explore",
+  status: { text: "", isError: false },
+  explorer: { path: [], highlightFieldNumber: null, showUnset: false, listLimit: LIST_PAGE_SIZE, listFilter: "", guesses: null },
+  search: { query: "", includeNames: true, includeTypes: true, results: null, truncated: false },
+  collections: { pattern: null, filter: "", requiredFields: new Set(), limit: COLLECTION_PAGE_SIZE, presenceCache: new Map() },
+  circuits: { graphIndex: null, axis: "xy", selectedNodeId: null, selectedTypeKey: null, transform: null },
+  chipLabels: {},
+  schemaView: { query: "", selectedTypeName: null },
+};
+
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  applyProps(node, props);
+  appendChildren(node, children);
+  return node;
+}
+
+function svgEl(tag, props, ...children) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  applyProps(node, props);
+  appendChildren(node, children);
+  return node;
+}
+
+function applyProps(node, props) {
+  if (!props) return;
+  for (const [key, value] of Object.entries(props)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (key === "class") node.setAttribute("class", value);
+    else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2).toLowerCase(), value);
+    else if (key === "value") node.value = value;
+    else if (key === "checked") node.checked = value;
+    else if (value === true) node.setAttribute(key, "");
+    else node.setAttribute(key, value);
+  }
+}
+
+function appendChildren(node, children) {
+  for (const child of children.flat(Infinity)) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+}
+
+function clickableRow(onActivate, props, ...cells) {
+  const row = el("tr", { ...props, class: `${props?.class || ""} is-clickable`.trim(), tabindex: "0" }, ...cells);
+  row.addEventListener("click", onActivate);
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onActivate();
+    }
+  });
+  return row;
+}
+
+function formatByteSize(byteCount) {
+  if (byteCount < 1024) return `${byteCount} B`;
+  if (byteCount < 1024 * 1024) return `${(byteCount / 1024).toFixed(1)} KB`;
+  return `${(byteCount / 1024 / 1024).toFixed(2)} MB`;
+}
+
+let toastTimer = null;
+function showToast(text) {
+  const toast = document.getElementById("toast");
+  toast.textContent = text;
+  toast.classList.add("is-visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("is-visible"), 2200);
+}
+
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (error) {
+    const scratch = el("textarea", { class: "visually-hidden" });
+    scratch.value = text;
+    document.body.append(scratch);
+    scratch.select();
+    document.execCommand("copy");
+    scratch.remove();
+  }
+  showToast(`Copied ${label} (${formatByteSize(text.length)})`);
+}
+
+function copyJson(value, field, label) {
+  const plain = value instanceof DecodedMessage ? toPlainMessage(value) : toPlainValue(value, field);
+  copyText(JSON.stringify(plain, null, 2), label);
+}
+
+function setStatus(text, isError = false) {
+  state.status = { text, isError };
+  const statusLine = document.querySelector(".status-line");
+  if (statusLine) {
+    statusLine.textContent = text || "Ready";
+    statusLine.parentElement.classList.toggle("is-error", isError);
+  }
+}
+
+function describeUnknownValue(value, wireType) {
+  if (wireType === 5 && typeof value === "number") {
+    const buffer = new DataView(new ArrayBuffer(4));
+    buffer.setUint32(0, value, true);
+    return `${value} (as float: ${formatNumber(buffer.getFloat32(0, true))})`;
+  }
+  if (wireType === 1 && typeof value === "bigint") {
+    const buffer = new DataView(new ArrayBuffer(8));
+    buffer.setBigUint64(0, value, true);
+    return `${value} (as double: ${formatNumber(buffer.getFloat64(0, true))})`;
+  }
+  return summarizeValue(value, null);
+}
+
+const WIRE_TYPE_LABELS = { 0: "varint", 1: "fixed64", 2: "length-delimited", 5: "fixed32" };
+
+function kindClassFor(value, field) {
+  const kind = valueKind(value);
+  if (kind === "message") return guidFromMessage(value) ? "kind-guid" : "kind-message";
+  if (kind === "bytes" && field && value.length === 16 && /id|guid/i.test(field.name)) return "kind-guid";
+  return `kind-${kind}`;
+}
+
+// ---------------------------------------------------------------------------
+// File loading
+// ---------------------------------------------------------------------------
+
+// PrefabIds.csv from the export: Guid,Base64 Guid,Type
+function tryParsePrefabCsv(fileName, bytes) {
+  const text = new TextDecoder("utf-8").decode(bytes.subarray(0, 200000));
+  if (!/^\uFEFF?"?Guid"?,/.test(text)) return null;
+  const names = new Map();
+  for (const line of text.split(/\r?\n/).slice(1)) {
+    const columns = line.split(",").map((column) => column.trim().replace(/^"|"$/g, ""));
+    if (columns.length >= 3 && /^[0-9a-f-]{36}$/i.test(columns[0]) && columns[2]) names.set(columns[0].toLowerCase(), columns[2]);
+  }
+  return names.size > 0 ? names : null;
+}
+
+// Prefab names from every CSV loaded are merged and kept in this browser.
+const PREFAB_STORAGE_KEY = "room-inspector:prefab-names";
+
+function loadStoredPrefabNames() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PREFAB_STORAGE_KEY) || "{}");
+    return new Map(Object.entries(stored && typeof stored === "object" ? stored : {}));
+  } catch (error) {
+    return new Map();
+  }
+}
+
+function saveStoredPrefabNames() {
+  try {
+    localStorage.setItem(PREFAB_STORAGE_KEY, JSON.stringify(Object.fromEntries(state.prefabNames)));
+  } catch (error) {
+    showToast("Couldn't save prefab names in this browser. Copy them out to keep them.");
+  }
+}
+
+function mergePrefabNames(newNames) {
+  let added = 0;
+  let renamed = 0;
+  for (const [guid, typeName] of newNames) {
+    const existing = state.prefabNames.get(guid);
+    if (existing === undefined) added++;
+    else if (existing !== typeName) renamed++;
+    state.prefabNames.set(guid, typeName);
+  }
+  saveStoredPrefabNames();
+  return { added, renamed };
+}
+
+function prefabTableAsCsv() {
+  const rows = [...allPrefabNames().entries()].sort((first, second) => first[1].localeCompare(second[1]));
+  const lines = ["\"Guid\",\"Base64 Guid\",\"Type\""];
+  for (const [guid, typeName] of rows) {
+    const hex = guid.replace(/-/g, "");
+    const bytes = new Uint8Array(16);
+    const order = [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+    order.forEach((sourceIndex, targetIndex) => { bytes[sourceIndex] = parseInt(hex.slice(targetIndex * 2, targetIndex * 2 + 2), 16); });
+    lines.push(`"${guid}","${bytesToBase64(bytes)}","${typeName}"`);
+  }
+  return lines.join("\r\n") + "\r\n";
+}
+
+function renderPrefabMenu() {
+  const count = allPrefabNames().size;
+  const bundledNote = state.bundledSources.prefabs
+    ? `${state.bundledPrefabNames.size.toLocaleString()} came with this page (${state.bundledSources.prefabs}). `
+    : "";
+  return el("details", { class: "file-slot prefab-menu" },
+    el("summary", {},
+      el("span", { class: "file-slot-role" }, "Prefab names"),
+      el("span", { class: "file-slot-name" }, count ? `${count.toLocaleString()} known` : "none")),
+    el("div", { class: "prefab-menu-panel panel" },
+      el("p", { class: "node-meta" }, count
+        ? `${bundledNote}Names from every PrefabIds.csv you've opened are merged on top and saved in this browser.`
+        : "Open a PrefabIds.csv from an export, or a merged table, to name chips and room objects."),
+      count ? el("div", { class: "decode-row" },
+        el("button", { class: "button is-small", onclick: () => copyText(prefabTableAsCsv(), "prefab table") }, "Copy as CSV"),
+        el("button", {
+          class: "button is-small",
+          onclick: () => {
+            state.prefabNames = new Map();
+            saveStoredPrefabNames();
+            showToast(state.bundledPrefabNames.size ? "Forgot your saved prefab names. The page's own table is still loaded." : "Forgot all saved prefab names");
+            render();
+          },
+        }, "Forget saved names")) : null),
+  );
+}
+
+function prettyPrefabName(typeName) {
+  // Only the export's SCREAMING_SNAKE type names get reformatted; prefab names from the game are shown as written.
+  if (!/^[A-Z0-9_]+$/.test(typeName)) return typeName;
+  const words = typeName.toLowerCase().split("_").filter(Boolean);
+  const sentence = words.join(" ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+function allPrefabNames() {
+  return new Map([...state.bundledPrefabNames, ...state.prefabNames]);
+}
+
+function prefabNameFor(guid) {
+  const key = guid ? guid.toLowerCase() : null;
+  const typeName = key ? state.prefabNames.get(key) ?? state.bundledPrefabNames.get(key) : null;
+  return typeName ? prettyPrefabName(typeName) : null;
+}
+
+setPrefabNameResolver((guid) => prefabNameFor(guid));
+
+function tryParseDescriptorSet(bytes) {
+  try {
+    const schema = Schema.fromDescriptorSetBytes(bytes);
+    const looksValid = schema.files.every((file) => file.name.endsWith(".proto")) && schema.messages.size > 0;
+    return looksValid ? schema : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function loadFiles(fileList) {
+  const files = [...fileList];
+  if (files.length === 0) return;
+  let newDataFile = false;
+
+  for (const file of files) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const prefabNames = tryParsePrefabCsv(file.name, bytes);
+    if (prefabNames) {
+      const { added, renamed } = mergePrefabNames(prefabNames);
+      state.prefabFileName = file.name;
+      setStatus(`Read ${prefabNames.size} prefab names from ${file.name}: ${added} new${renamed ? `, ${renamed} renamed` : ""}. ${allPrefabNames().size} known in total.`);
+      continue;
+    }
+    const schema = tryParseDescriptorSet(bytes);
+    if (schema) {
+      state.schema = schema;
+      state.schemaFileName = file.name;
+      setStatus(`Loaded schema from ${file.name}: ${schema.messages.size} message types, ${schema.enums.size} enums.`);
+    } else {
+      state.dataBytes = bytes;
+      state.dataFileName = file.name;
+      newDataFile = true;
+    }
+  }
+
+  if (newDataFile && state.schema) {
+    state.rootTypeName = state.schema.guessTypeForFileName(state.dataFileName) || state.rootTypeName;
+  }
+  if (state.schema && state.dataBytes) {
+    if (!state.rootTypeName || !state.schema.messages.has(state.rootTypeName)) {
+      state.rootTypeName = state.schema.guessTypeForFileName(state.dataFileName)
+        || (state.schema.messages.has("rec_room.PersistedRoomData") ? "rec_room.PersistedRoomData" : null);
+    }
+    decodeDocument();
+  } else {
+    render();
+  }
+}
+
+function decodeDocument() {
+  if (!state.rootTypeName) {
+    state.root = null;
+    setStatus(`Choose the message type for ${state.dataFileName} in the type box above.`, true);
+    render();
+    return;
+  }
+  setStatus(`Decoding ${state.dataFileName} as ${state.rootTypeName}…`);
+  render();
+  setTimeout(() => {
+    const startTime = performance.now();
+    try {
+      const messageType = state.schema.messages.get(state.rootTypeName);
+      state.root = decodeMessage(state.dataBytes, messageType, state.schema);
+      state.analysis = analyzeDocument(state.root);
+      resetViews();
+      const elapsed = Math.round(performance.now() - startTime);
+      setStatus(`Decoded ${formatByteSize(state.dataBytes.length)} into ${state.analysis.messageCount.toLocaleString()} messages in ${elapsed} ms.`);
+    } catch (error) {
+      state.root = null;
+      state.analysis = null;
+      setStatus(`Couldn't decode ${state.dataFileName} as ${state.rootTypeName}: ${error.message}. Pick a different message type.`, true);
+    }
+    render();
+  }, 20);
+}
+
+function resetViews() {
+  state.explorer = { ...state.explorer, path: [], highlightFieldNumber: null, listLimit: LIST_PAGE_SIZE, listFilter: "", guesses: null };
+  state.search = { ...state.search, results: null, truncated: false };
+  state.collections = { pattern: state.analysis?.collections[0]?.pattern || null, filter: "", requiredFields: new Set(), limit: COLLECTION_PAGE_SIZE, presenceCache: new Map() };
+  state.circuits = { graphIndex: null, axis: state.circuits.axis, selectedNodeId: null, selectedTypeKey: null, transform: null };
+}
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+function navigateTo(path, highlightFieldNumber = null) {
+  state.explorer.path = path;
+  state.explorer.highlightFieldNumber = highlightFieldNumber;
+  state.explorer.listLimit = LIST_PAGE_SIZE;
+  state.explorer.listFilter = "";
+  state.explorer.guesses = null;
+  state.tab = "explore";
+  render();
+  window.scrollTo({ top: 0 });
+}
+
+function openSchemaType(typeName) {
+  state.schemaView.selectedTypeName = typeName;
+  state.tab = "schema";
+  render();
+}
+
+// ---------------------------------------------------------------------------
+// Header and tabs
+// ---------------------------------------------------------------------------
+
+function renderHeader() {
+  const fileInput = el("input", {
+    type: "file",
+    multiple: true,
+    class: "visually-hidden",
+    id: "file-input",
+    onchange: (event) => loadFiles(event.target.files),
+  });
+
+  const typeOptions = el("datalist", { id: "message-types" });
+  if (state.schema) {
+    const typeNames = [...state.schema.messages.keys()].filter((name) => !name.startsWith("google.")).sort();
+    for (const typeName of typeNames) typeOptions.append(el("option", { value: typeName }));
+  }
+
+  const typeInput = el("input", {
+    class: "text-input",
+    list: "message-types",
+    placeholder: "Message type, e.g. rec_room.PersistedRoomData",
+    value: state.rootTypeName || "",
+    "aria-label": "Message type of the data file",
+    disabled: !state.schema,
+    onchange: (event) => {
+      const typeName = event.target.value.trim();
+      if (!state.schema.messages.has(typeName)) {
+        setStatus(`${typeName} isn't a message type in this schema.`, true);
+        return;
+      }
+      state.rootTypeName = typeName;
+      if (state.dataBytes) decodeDocument();
+    },
+  });
+
+  return el("header", { class: "app-header" },
+    el("div", { class: "toolbar" },
+      el("h1", { class: "app-title" }, "Room Inspector"),
+      el("button", { class: "button", onclick: () => fileInput.click() }, "Open…"),
+      fileInput,
+      el("span", { class: "toolbar-divider", "aria-hidden": "true" }),
+      fileSlot("Schema", state.schemaFileName),
+      fileSlot("Data", state.dataFileName, state.dataBytes ? formatByteSize(state.dataBytes.length) : null),
+      renderPrefabMenu(),
+      el("label", { class: "type-picker" },
+        el("span", { class: "file-slot-role" }, "Type"),
+        typeInput,
+        typeOptions,
+      ),
+    ),
+    renderTabs(),
+  );
+}
+
+function fileSlot(role, fileName, detail) {
+  return el("span", { class: `file-slot${fileName ? "" : " is-missing"}` },
+    el("span", { class: "file-slot-role" }, role),
+    el("span", { class: "file-slot-name", title: fileName || "" }, fileName || "none"),
+    detail ? el("span", { class: "file-slot-detail" }, detail) : null,
+  );
+}
+
+function renderTabs() {
+  const hasDocument = Boolean(state.root);
+  const tabDefinitions = [
+    { id: "explore", label: "Explore", enabled: hasDocument },
+    { id: "collections", label: "Collections", enabled: hasDocument, count: state.analysis?.collections.length },
+    { id: "circuits", label: "Circuits", enabled: hasDocument, count: hasDocument ? buildCircuitModel().graphs.filter((graph) => graph.nodes.length > 0).length : undefined },
+    { id: "schema", label: "Schema", enabled: Boolean(state.schema), count: state.schema?.messages.size },
+  ];
+  return el("nav", { class: "tabs", role: "tablist" },
+    tabDefinitions.map((tab) => el("button", {
+      class: "tab",
+      role: "tab",
+      "aria-selected": String(state.tab === tab.id),
+      disabled: !tab.enabled,
+      onclick: () => {
+        state.tab = tab.id;
+        render();
+      },
+    }, tab.label, tab.count !== undefined ? el("span", { class: "tab-count" }, tab.count.toLocaleString()) : null)),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+
+function renderIntro() {
+  const hostedSchema = Boolean(state.bundledSources.schema);
+  const hostedPrefabs = Boolean(state.bundledSources.prefabs);
+  const prefabCount = allPrefabNames().size;
+
+  const fileRow = (fileName, purpose, status, isLoaded) => el("tr", {},
+    el("td", {}, el("code", {}, fileName)),
+    el("td", {}, purpose),
+    el("td", { class: isLoaded ? "status-ok" : "status-missing" }, status),
+  );
+
+  const rows = [
+    fileRow("descriptor_set.binpb", "Schema. Describes every field in the room data.",
+      hostedSchema ? "Included with this page" : state.schemaFileName ? "Loaded" : "Required",
+      hostedSchema || Boolean(state.schemaFileName)),
+    fileRow("persisted_room_data.binpb", "The room. Any other .binpb from the export also works if you pick its type.",
+      state.dataFileName ? "Loaded" : "Required", Boolean(state.dataFileName)),
+    fileRow("PrefabIds.csv", "Prefab names for chips and room objects.",
+      hostedPrefabs ? `Included with this page (${state.bundledPrefabNames.size.toLocaleString()} names)` : prefabCount ? `${prefabCount.toLocaleString()} names saved` : "Optional",
+      hostedPrefabs || prefabCount > 0),
+  ];
+
+  return el("section", { class: "empty-state" },
+    el("h2", {}, "No room open"),
+    el("p", {}, hostedSchema
+      ? "Open a room file from a Rec Room data export, or drop it on this window. Files are read in your browser and aren't uploaded anywhere."
+      : "Open the files from a Rec Room data export, or drop them on this window. You can select them all at once. Files are read in your browser and aren't uploaded anywhere."),
+    el("table", { class: "data file-table" },
+      el("thead", {}, el("tr", {}, el("th", {}, "File"), el("th", {}, "Contents"), el("th", {}, "Status"))),
+      el("tbody", {}, rows)),
+    el("p", {}, el("button", { class: "button is-primary", onclick: () => document.getElementById("file-input").click() },
+      hostedSchema ? "Open room file…" : "Open files…")),
+    hostedSchema || hostedPrefabs
+      ? el("p", { class: "node-meta" }, "To use your own schema or prefab list instead of the included ones, open them the same way.")
+      : null,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Explore tab
+// ---------------------------------------------------------------------------
+
+function renderExplore() {
+  return el("div", { class: "split" }, renderSearchSidebar(), renderNodeView());
+}
+
+function renderSearchSidebar() {
+  const queryInput = el("input", {
+    class: "text-input",
+    type: "search",
+    placeholder: "Name, text, GUID, number…",
+    value: state.search.query,
+    "aria-label": "Search the room data",
+  });
+  const form = el("form", {
+    class: "search-form",
+    onsubmit: (event) => {
+      event.preventDefault();
+      runSearch(queryInput.value);
+    },
+  }, queryInput, el("button", { class: "button", type: "submit" }, "Search"));
+
+  const options = el("div", { class: "search-options" },
+    el("label", {}, el("input", {
+      type: "checkbox",
+      checked: state.search.includeNames,
+      onchange: (event) => { state.search.includeNames = event.target.checked; },
+    }), "Field names"),
+    el("label", {}, el("input", {
+      type: "checkbox",
+      checked: state.search.includeTypes,
+      onchange: (event) => { state.search.includeTypes = event.target.checked; },
+    }), "Type names"),
+  );
+
+  let resultsContent;
+  if (state.search.results === null) {
+    resultsContent = el("div", { class: "result-note" }, "Search matches field names, type names, text, enum values, GUIDs and exact numbers.");
+  } else if (state.search.results.length === 0) {
+    resultsContent = el("div", { class: "result-note" }, `Nothing matches "${state.search.query}".`);
+  } else {
+    resultsContent = [
+      el("div", { class: "result-note" },
+        state.search.truncated ? `Showing the first ${state.search.results.length} matches.` : `${state.search.results.length} ${state.search.results.length === 1 ? "match" : "matches"}.`),
+      state.search.results.map((result) => el("button", {
+        class: "result-item",
+        onclick: () => navigateTo(result.path, result.fieldNumber),
+      },
+      el("div", { class: "result-path" }, pathToText(result.path)),
+      el("div", { class: "result-text" }, result.kind === "type" ? `is a ${shortTypeName(result.text)}` : result.text))),
+    ];
+  }
+
+  return el("aside", { class: "panel sidebar" },
+    el("h3", {}, "Search"),
+    form,
+    options,
+    el("div", { class: "sidebar-scroll" }, resultsContent),
+  );
+}
+
+function runSearch(query) {
+  state.search.query = query;
+  const { results, truncated } = searchDocument(state.root, query, {
+    includeNames: state.search.includeNames,
+    includeTypes: state.search.includeTypes,
+    limit: 500,
+  });
+  state.search.results = results;
+  state.search.truncated = truncated;
+  render();
+}
+
+function renderBreadcrumb(path) {
+  const crumbs = [];
+  crumbs.push({ label: shortTypeName(state.rootTypeName), path: [] });
+  for (let index = 0; index < path.length; index++) {
+    const step = path[index];
+    let label;
+    if (step.decodeAs !== undefined) label = `as ${step.decodeAs ? shortTypeName(step.decodeAs) : "raw"}`;
+    else if (step.index === -1) label = step.name;
+    else if (step.repeated) label = `[${step.index}]`;
+    else label = step.name;
+    const previous = path[index - 1];
+    // A list item crumb follows its list crumb; show the field name once.
+    if (step.repeated && step.index !== -1 && !(previous && previous.fieldNumber === step.fieldNumber && previous.index === -1)) {
+      crumbs.push({ label: step.name, path: [...path.slice(0, index), { ...step, index: -1 }] });
+    }
+    crumbs.push({ label, path: path.slice(0, index + 1) });
+  }
+  const items = [];
+  crumbs.forEach((crumb, crumbIndex) => {
+    if (crumbIndex > 0) items.push(el("span", { class: "crumb-separator", "aria-hidden": "true" }, "/"));
+    const isCurrent = crumbIndex === crumbs.length - 1;
+    items.push(el("button", {
+      class: "crumb",
+      "aria-current": isCurrent ? "page" : null,
+      onclick: isCurrent ? null : () => navigateTo(crumb.path),
+    }, crumb.label));
+  });
+  return el("nav", { class: "breadcrumb", "aria-label": "Location in the file" }, items);
+}
+
+function normalizedPath(path) {
+  // Make sure list-item steps coming from lists keep their repeated flag.
+  return path.map((step) => ({ ...step }));
+}
+
+function renderNodeView() {
+  const path = normalizedPath(state.explorer.path);
+  let node;
+  try {
+    node = resolvePath(state.root, path, state.schema);
+  } catch (error) {
+    return el("section", { class: "node-view" },
+      renderBreadcrumb(path),
+      el("div", { class: "panel empty-note" }, `Couldn't open this location: ${error.message}`),
+    );
+  }
+
+  let body;
+  if (node.kind === "message") body = renderMessageNode(node, path);
+  else if (node.kind === "list") body = renderListNode(node, path);
+  else if (node.kind === "bytes") body = renderBytesNode(node, path);
+  else body = renderScalarNode(node);
+
+  return el("section", { class: "node-view" }, renderBreadcrumb(path), body);
+}
+
+function renderMessageNode(node, path) {
+  const message = node.value;
+  const entries = message.orderedEntries();
+  const rows = [];
+
+  const entriesByNumber = new Map(entries.map((entry) => [entry.number, entry]));
+  const fieldOrder = [];
+  if (message.type) {
+    for (const field of message.type.fields) {
+      if (entriesByNumber.has(field.number)) fieldOrder.push({ entry: entriesByNumber.get(field.number) });
+      else if (state.explorer.showUnset) fieldOrder.push({ unsetField: field });
+    }
+  }
+  for (const entry of entries) {
+    if (!entry.field) fieldOrder.push({ entry });
+  }
+
+  for (const item of fieldOrder) {
+    if (item.unsetField) rows.push(renderUnsetRow(item.unsetField));
+    else rows.push(renderEntryRow(item.entry, path));
+  }
+
+  const typeName = message.type ? message.type.fullName : null;
+  const header = el("div", { class: "node-header" },
+    el("h2", { class: "node-title" }, message.type ? message.type.name : "Raw message"),
+    typeName ? el("button", { class: "type-link", onclick: () => openSchemaType(typeName) }, typeName) : null,
+    el("span", { class: "node-meta" }, `${entries.length} fields set, ${formatByteSize(message.bytes.length)}`),
+    el("div", { class: "node-actions" },
+      message.type ? el("label", {}, el("input", {
+        type: "checkbox",
+        checked: state.explorer.showUnset,
+        onchange: (event) => {
+          state.explorer.showUnset = event.target.checked;
+          render();
+        },
+      }), "Show unset fields") : null,
+      el("button", { class: "button is-small", onclick: () => copyJson(message, null, "JSON") }, "Copy JSON"),
+    ),
+  );
+
+  const decodedNote = node.decodedAs !== undefined
+    ? el("div", { class: "decoded-note" }, node.decodedAs
+      ? `These bytes were decoded as ${node.decodedAs}. If the values look wrong, go back and try another type.`
+      : "Decoded without a schema. Field names are unknown, so fields show their numbers and wire types.")
+    : null;
+
+  const table = rows.length > 0
+    ? el("div", { class: "scroll-x" }, el("table", { class: "data" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Field"), el("th", {}, "Type"), el("th", {}, "Value"))),
+      el("tbody", {}, rows)))
+    : el("div", { class: "empty-note" }, "This message has no fields set. Every field is at its default value.");
+
+  const panel = el("div", { class: "panel" }, header, decodedNote, table);
+  requestAnimationFrame(() => panel.querySelector("tr.is-highlighted")?.scrollIntoView({ block: "center" }));
+  return panel;
+}
+
+function renderUnsetRow(field) {
+  return el("tr", { class: "is-unset" },
+    el("td", {}, el("span", { class: "field-name" }, field.name), el("span", { class: "field-number" }, `#${field.number}`)),
+    el("td", {}, renderFieldType(field)),
+    el("td", {}, el("span", { class: "value" }, "unset")),
+  );
+}
+
+function renderFieldType(field) {
+  const typeText = `${field.repeated && !state.schema.isMapField(field) ? "repeated " : ""}${state.schema.describeFieldType(field)}`;
+  const isLinkable = (field.type === FieldType.MESSAGE || field.type === FieldType.ENUM) && field.typeName && !state.schema.isMapField(field);
+  const typeElement = isLinkable
+    ? el("button", {
+      class: "type-link",
+      onclick: (event) => {
+        event.stopPropagation();
+        openSchemaType(field.typeName);
+      },
+    }, typeText)
+    : el("span", { class: "field-type" }, typeText);
+  return el("span", { class: "field-type" }, typeElement, field.oneofName ? el("span", { class: "field-oneof" }, `oneof ${field.oneofName}`) : null);
+}
+
+function renderEntryRow(entry, path) {
+  const field = entry.field;
+  const isHighlighted = state.explorer.highlightFieldNumber === entry.number;
+  const nameCell = el("td", {},
+    el("span", { class: "field-name" }, field ? field.name : `#${entry.number}`),
+    el("span", { class: "field-number" }, `#${entry.number}`),
+  );
+  const typeCell = el("td", {}, field ? renderFieldType(field) : el("span", { class: "field-type" }, `unknown (${WIRE_TYPE_LABELS[entry.wireType] || entry.wireType})`));
+  const isRepeated = field ? field.repeated : entry.values.length > 1;
+
+  if (isRepeated) {
+    const firstValues = entry.values.slice(0, 4);
+    const allScalar = firstValues.every((value) => !(value instanceof DecodedMessage) && !(value instanceof Uint8Array));
+    const preview = allScalar
+      ? firstValues.map((value) => (field ? summarizeValue(value, field) : describeUnknownValue(value, entry.wireType))).join(", ") + (entry.values.length > 4 ? ", …" : "")
+      : summarizeValue(entry.values[0], field);
+    const valueCell = el("td", {},
+      el("span", { class: "value kind-list" }, `${entry.values.length.toLocaleString()} ${entry.values.length === 1 ? "item" : "items"}`),
+      el("span", { class: "drill-mark", "aria-hidden": "true" }, "▸"),
+      el("div", { class: `value ${kindClassFor(entry.values[0], field)}` }, preview),
+    );
+    return clickableRow(
+      () => navigateTo([...path, { ...makeStep(entry, -1), repeated: true }]),
+      { class: isHighlighted ? "is-highlighted" : "" },
+      nameCell, typeCell, valueCell,
+    );
+  }
+
+  const value = entry.values[entry.values.length - 1];
+  const kind = valueKind(value);
+  const summary = field ? summarizeValue(value, field) : describeUnknownValue(value, entry.wireType);
+  const valueCell = el("td", {},
+    el("span", { class: `value ${kindClassFor(value, field)}` }, summary),
+    kind === "message" || kind === "bytes" ? el("span", { class: "drill-mark", "aria-hidden": "true" }, "▸") : null,
+  );
+  const rowProps = { class: isHighlighted ? "is-highlighted" : "" };
+  if (kind === "message" || kind === "bytes") {
+    const step = { ...makeStep(entry, entry.values.length - 1), repeated: false };
+    return clickableRow(() => navigateTo([...path, step]), rowProps, nameCell, typeCell, valueCell);
+  }
+  return el("tr", rowProps, nameCell, typeCell, valueCell);
+}
+
+function renderListNode(node, path) {
+  const entry = node.value;
+  const field = entry.field;
+  const listStep = path[path.length - 1];
+  const filterText = state.explorer.listFilter.trim().toLowerCase();
+
+  const matchingIndexes = [];
+  for (let index = 0; index < entry.values.length; index++) {
+    if (!filterText) {
+      matchingIndexes.push(index);
+      continue;
+    }
+    const summary = field ? summarizeValue(entry.values[index], field) : describeUnknownValue(entry.values[index], entry.wireType);
+    if (summary.toLowerCase().includes(filterText) || String(index) === filterText) matchingIndexes.push(index);
+  }
+  const visibleIndexes = matchingIndexes.slice(0, state.explorer.listLimit);
+
+  const rows = visibleIndexes.map((index) => {
+    const value = entry.values[index];
+    const kind = valueKind(value);
+    const summary = field ? summarizeValue(value, field) : describeUnknownValue(value, entry.wireType);
+    const cells = [
+      el("td", { class: "index-cell" }, index),
+      el("td", {},
+        el("span", { class: `value ${kindClassFor(value, field)}` }, summary),
+        kind === "message" || kind === "bytes" ? el("span", { class: "drill-mark", "aria-hidden": "true" }, "▸") : null,
+      ),
+    ];
+    if (kind === "message" || kind === "bytes") {
+      const step = { ...listStep, index, repeated: true };
+      return clickableRow(() => navigateTo([...path.slice(0, -1), step]), {}, cells);
+    }
+    return el("tr", {}, cells);
+  });
+
+  const filterInput = el("input", {
+    class: "text-input",
+    type: "search",
+    placeholder: "Filter items by their summary or index",
+    value: state.explorer.listFilter,
+    "aria-label": "Filter list items",
+    oninput: (event) => {
+      state.explorer.listFilter = event.target.value;
+      state.explorer.listLimit = LIST_PAGE_SIZE;
+      rerenderPreservingFocus(".list-toolbar input");
+    },
+  });
+
+  const header = el("div", { class: "node-header" },
+    el("h2", { class: "node-title" }, field ? field.name : `#${entry.number}`),
+    field ? renderFieldType(field) : null,
+    el("span", { class: "node-meta" }, `${entry.values.length.toLocaleString()} items`),
+    el("div", { class: "node-actions" },
+      el("button", { class: "button is-small", onclick: () => copyJson(entry.values.map((value) => toPlainValue(value, field)), null, "JSON") }, "Copy JSON"),
+    ),
+  );
+
+  const remaining = matchingIndexes.length - visibleIndexes.length;
+  const footer = el("div", { class: "list-footer" },
+    `Showing ${visibleIndexes.length.toLocaleString()} of ${matchingIndexes.length.toLocaleString()}${filterText ? " matching" : ""}.`,
+    remaining > 0 ? el("button", {
+      class: "button is-small",
+      onclick: () => {
+        state.explorer.listLimit += LIST_PAGE_SIZE;
+        render();
+      },
+    }, `Show ${Math.min(remaining, LIST_PAGE_SIZE)} more`) : null,
+  );
+
+  return el("div", { class: "panel" },
+    header,
+    el("div", { class: "list-toolbar" }, filterInput),
+    rows.length > 0
+      ? el("div", { class: "scroll-x" }, el("table", { class: "data" },
+        el("thead", {}, el("tr", {}, el("th", {}, "#"), el("th", {}, "Value"))),
+        el("tbody", {}, rows)))
+      : el("div", { class: "empty-note" }, "No items match this filter."),
+    footer,
+  );
+}
+
+function renderScalarNode(node) {
+  return el("div", { class: "panel" },
+    el("div", { class: "node-header" }, el("h2", { class: "node-title" }, node.field ? node.field.name : "Value")),
+    el("div", { class: "empty-note" }, el("span", { class: `value ${kindClassFor(node.value, node.field)}` }, summarizeValue(node.value, node.field))),
+  );
+}
+
+function renderHexDump(bytes) {
+  const lines = [];
+  const length = Math.min(bytes.length, HEX_DUMP_LIMIT);
+  for (let offset = 0; offset < length; offset += 16) {
+    const slice = bytes.subarray(offset, Math.min(offset + 16, length));
+    const hexPart = [...slice].map((byte) => byte.toString(16).padStart(2, "0")).join(" ").padEnd(47, " ");
+    const asciiPart = [...slice].map((byte) => (byte >= 32 && byte < 127 ? String.fromCharCode(byte) : "·")).join("");
+    lines.push(el("span", { class: "hex-offset" }, offset.toString(16).padStart(6, "0")), "  ", hexPart, "  ", el("span", { class: "hex-ascii" }, asciiPart), "\n");
+  }
+  if (bytes.length > length) lines.push(el("span", { class: "hex-offset" }, `… ${formatByteSize(bytes.length - length)} more`));
+  return el("pre", { class: "hexdump" }, lines);
+}
+
+function textPreviewFor(bytes) {
+  if (bytes.length === 0) return null;
+  const sample = bytes.subarray(0, 8192);
+  let controlBytes = 0;
+  for (const byte of sample) {
+    if ((byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127) controlBytes++;
+  }
+  if (controlBytes > sample.length * 0.01) return null;
+  return new TextDecoder("utf-8", { fatal: false }).decode(sample);
+}
+
+function renderBytesNode(node, path) {
+  const bytes = node.value;
+  const field = node.field;
+  const guid = bytesToGuidString(bytes);
+  const textPreview = textPreviewFor(bytes);
+
+  const typeInput = el("input", {
+    class: "text-input",
+    list: "message-types",
+    placeholder: "Message type to decode these bytes as",
+    "aria-label": "Message type for these bytes",
+  });
+  const decodeAs = (typeName) => navigateTo([...path, { decodeAs: typeName }]);
+  const detectedType = buildCircuitModel().detectedDecodes.get(bytes);
+
+  const decodeSection = el("div", { class: "bytes-section" },
+    el("h3", {}, "Decode as a message"),
+    detectedType ? el("div", { class: "decode-row" },
+      el("button", { class: "button is-primary", onclick: () => decodeAs(detectedType) }, `Decode as ${shortTypeName(detectedType)}`),
+      el("span", { class: "node-meta" }, "These are Circuits V1 graphs. They also appear in the Circuits tab."),
+    ) : null,
+    el("div", { class: "decode-row", style: detectedType ? "margin-top: 10px" : null },
+      typeInput,
+      el("button", {
+        class: "button",
+        onclick: () => {
+          const typeName = typeInput.value.trim();
+          if (!state.schema.messages.has(typeName)) {
+            showToast(`${typeName || "That"} isn't a message type in this schema`);
+            return;
+          }
+          tryDecodeBytes(bytes, typeName, () => decodeAs(typeName));
+        },
+      }, "Decode"),
+      el("button", { class: "button", onclick: () => tryDecodeBytes(bytes, "", () => decodeAs("")) }, "Decode without schema"),
+      el("button", {
+        class: "button",
+        onclick: () => {
+          state.explorer.guesses = guessMessageTypes(bytes, state.schema);
+          render();
+        },
+      }, "Suggest types"),
+    ),
+    state.explorer.guesses
+      ? (state.explorer.guesses.length > 0
+        ? el("div", { class: "guess-list" }, state.explorer.guesses.map((guess) => el("button", {
+          class: "field-chip",
+          onclick: () => decodeAs(guess.typeName),
+          title: `${guess.knownFields} fields decoded, no unknown fields`,
+        }, shortTypeName(guess.typeName), el("span", { class: "chip-count" }, guess.knownFields))))
+        : el("p", { class: "node-meta" }, "No message type decodes these bytes cleanly. They may be compressed, encrypted or not protobuf."))
+      : null,
+  );
+
+  return el("div", { class: "panel" },
+    el("div", { class: "node-header" },
+      el("h2", { class: "node-title" }, field ? field.name : "Bytes"),
+      el("span", { class: "node-meta" }, `${bytes.length.toLocaleString()} bytes`),
+      el("div", { class: "node-actions" },
+        el("button", { class: "button is-small", onclick: () => copyText(bytesToHex(bytes).replace(/ /g, ""), "hex") }, "Copy hex"),
+        el("button", { class: "button is-small", onclick: () => copyText(bytesToBase64(bytes), "base64") }, "Copy base64"),
+      ),
+    ),
+    guid ? el("div", { class: "bytes-section" }, el("h3", {}, "As a GUID"), el("span", { class: "value kind-guid" }, guid)) : null,
+    textPreview ? el("div", { class: "bytes-section" }, el("h3", {}, "As text"), el("pre", { class: "text-preview" }, textPreview)) : null,
+    bytes.length > 0 ? decodeSection : null,
+    bytes.length > 0 ? el("div", { class: "bytes-section" }, el("h3", {}, "Hex"), renderHexDump(bytes)) : el("div", { class: "empty-note" }, "These bytes are empty."),
+  );
+}
+
+function tryDecodeBytes(bytes, typeName, onSuccess) {
+  try {
+    decodeBytesAs(bytes, typeName, state.schema);
+    onSuccess();
+  } catch (error) {
+    showToast(`Couldn't decode as ${typeName ? shortTypeName(typeName) : "raw protobuf"}: ${error.message}`);
+  }
+}
+
+function rerenderPreservingFocus(selector) {
+  const active = document.activeElement;
+  const selectionStart = active?.selectionStart;
+  render();
+  const replacement = document.querySelector(selector);
+  if (replacement) {
+    replacement.focus();
+    if (selectionStart !== undefined && selectionStart !== null) replacement.setSelectionRange(selectionStart, selectionStart);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Collections tab
+// ---------------------------------------------------------------------------
+
+function renderCollections() {
+  const collections = [...state.analysis.collections].sort((first, second) => second.items.length - first.items.length);
+  if (collections.length === 0) {
+    return el("div", { class: "panel empty-note" }, "This file has no repeated messages to list.");
+  }
+  let selected = collections.find((collection) => collection.pattern === state.collections.pattern);
+  if (!selected) {
+    selected = collections[0];
+    state.collections.pattern = selected.pattern;
+  }
+
+  const sidebar = el("aside", { class: "panel sidebar" },
+    el("h3", {}, "Lists in this file"),
+    el("div", { class: "sidebar-scroll" }, collections.map((collection) => el("button", {
+      class: "result-item collection-item",
+      "aria-current": String(collection === selected),
+      onclick: () => {
+        state.collections = { ...state.collections, pattern: collection.pattern, filter: "", requiredFields: new Set(), limit: COLLECTION_PAGE_SIZE };
+        render();
+      },
+    },
+    el("span", { class: "collection-pattern" }, collection.pattern),
+    el("span", { class: "collection-type" }, shortTypeName(collection.typeName || "?")),
+    el("span", { class: "collection-count" }, collection.items.length.toLocaleString())))),
+  );
+
+  return el("div", { class: "split" }, sidebar, renderCollectionTable(selected));
+}
+
+function fieldPresenceFor(collection) {
+  let presence = state.collections.presenceCache.get(collection.pattern);
+  if (presence) return presence;
+  presence = new Map();
+  for (const item of collection.items) {
+    for (const entry of item.message.orderedEntries()) {
+      const name = entry.field ? entry.field.name : `#${entry.number}`;
+      presence.set(name, (presence.get(name) || 0) + 1);
+    }
+  }
+  state.collections.presenceCache.set(collection.pattern, presence);
+  return presence;
+}
+
+function renderCollectionTable(collection) {
+  const presence = fieldPresenceFor(collection);
+  const requiredFields = state.collections.requiredFields;
+  const filterText = state.collections.filter.trim().toLowerCase();
+  const hasWildcards = collection.pattern.includes("[*]");
+
+  const itemFieldNames = (item) => item.message.orderedEntries().map((entry) => (entry.field ? entry.field.name : `#${entry.number}`));
+
+  const matchingItems = collection.items.filter((item) => {
+    if (requiredFields.size > 0) {
+      const names = new Set(itemFieldNames(item));
+      for (const required of requiredFields) if (!names.has(required)) return false;
+    }
+    if (filterText) {
+      const summary = summarizeMessage(item.message).toLowerCase();
+      if (!summary.includes(filterText) && !itemFieldNames(item).some((name) => name.includes(filterText))) return false;
+    }
+    return true;
+  });
+  const visibleItems = matchingItems.slice(0, state.collections.limit);
+
+  const chips = [...presence.entries()].sort((first, second) => second[1] - first[1]).map(([name, count]) => el("button", {
+    class: "field-chip",
+    "aria-pressed": String(requiredFields.has(name)),
+    title: `${count} of ${collection.items.length} items have ${name}`,
+    onclick: () => {
+      if (requiredFields.has(name)) requiredFields.delete(name);
+      else requiredFields.add(name);
+      state.collections.limit = COLLECTION_PAGE_SIZE;
+      render();
+    },
+  }, name, el("span", { class: "chip-count" }, count.toLocaleString())));
+
+  const summaries = visibleItems.map((item) => summarizeMessage(item.message));
+  const showSummary = summaries.some((summary) => !summary.startsWith("{ ") && summary !== "empty");
+  const rows = visibleItems.map((item, visibleIndex) => {
+    const itemPath = collectionItemPath(item);
+    const summary = summaries[visibleIndex];
+    const fieldNames = itemFieldNames(item);
+    return clickableRow(() => navigateTo(itemPath), {},
+      el("td", { class: "index-cell" }, hasWildcards ? pathToText(itemPath) : item.index),
+      showSummary ? el("td", {}, summary.startsWith("{ ") ? null : el("span", { class: `value ${kindClassFor(item.message, null)}` }, summary)) : null,
+      el("td", {}, el("div", { class: "tag-list" },
+        fieldNames.slice(0, 8).map((name) => el("span", { class: "tag" }, name)),
+        fieldNames.length > 8 ? el("span", { class: "tag" }, `+${fieldNames.length - 8}`) : null)),
+    );
+  });
+
+  const remaining = matchingItems.length - visibleItems.length;
+  return el("div", { class: "panel" },
+    el("div", { class: "node-header" },
+      el("h2", { class: "node-title" }, collection.pattern),
+      collection.typeName ? el("button", { class: "type-link", onclick: () => openSchemaType(collection.typeName) }, collection.typeName) : null,
+      el("span", { class: "node-meta" }, `${collection.items.length.toLocaleString()} items`),
+    ),
+    el("div", { class: "list-toolbar" }, el("input", {
+      class: "text-input",
+      type: "search",
+      placeholder: "Filter by name or field",
+      value: state.collections.filter,
+      "aria-label": "Filter items",
+      oninput: (event) => {
+        state.collections.filter = event.target.value;
+        state.collections.limit = COLLECTION_PAGE_SIZE;
+        rerenderPreservingFocus(".list-toolbar input");
+      },
+    }), el("span", { class: "node-meta" }, "Pick fields below to show only items that have them.")),
+    el("div", { class: "chip-row" }, chips),
+    rows.length > 0
+      ? el("div", { class: "scroll-x" }, el("table", { class: "data" },
+        el("thead", {}, el("tr", {}, el("th", {}, hasWildcards ? "Location" : "#"), showSummary ? el("th", {}, "Summary") : null, el("th", {}, "Fields set"))),
+        el("tbody", {}, rows)))
+      : el("div", { class: "empty-note" }, "No items match. Clear a field or the filter."),
+    el("div", { class: "list-footer" },
+      `Showing ${visibleItems.length.toLocaleString()} of ${matchingItems.length.toLocaleString()}.`,
+      remaining > 0 ? el("button", {
+        class: "button is-small",
+        onclick: () => {
+          state.collections.limit += COLLECTION_PAGE_SIZE;
+          render();
+        },
+      }, `Show ${Math.min(remaining, COLLECTION_PAGE_SIZE)} more`) : null,
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Circuits tab
+// ---------------------------------------------------------------------------
+
+function guidOf(message, fieldName, deprecatedFieldName) {
+  const guidMessage = message.get(fieldName);
+  if (guidMessage instanceof DecodedMessage) {
+    const guid = guidFromMessage(guidMessage);
+    if (guid && guid !== "(empty guid)") return guid;
+  }
+  const rawBytes = deprecatedFieldName ? message.get(deprecatedFieldName) : null;
+  return rawBytes instanceof Uint8Array && rawBytes.length > 0 ? bytesToGuidString(rawBytes) || bytesToHex(rawBytes) : null;
+}
+
+let circuitModelCache = null;
+
+const CV1_CONTAINER_TYPES = ["circuits_v1.CircuitNodeGraphCollectionData", "circuits_v1.CircuitNodeGraphData"];
+const CV1_GRAPH_TYPE = "circuits_v1.CircuitNodeGraphData";
+const CV1_NODE_TYPE = "circuits_v1.CircuitNodeData";
+
+function countMessagesOfType(message, typeName) {
+  let unknownFields = 0;
+  let matches = 0;
+  walkMessage(message, {
+    onMessage(inner) {
+      if (inner.typeName === typeName) matches++;
+    },
+    onEntry(owner, entry) {
+      if (!entry.field) unknownFields++;
+    },
+  });
+  return { matches, unknownFields };
+}
+
+// CV1 circuits are stored as opaque bytes (PersistedRoomData.circuit_data). Find the schema type that decodes them.
+function detectCircuitsV1Type(bytes) {
+  for (const typeName of CV1_CONTAINER_TYPES) {
+    if (!state.schema.messages.has(typeName)) continue;
+    try {
+      const decoded = decodeBytesAs(bytes, typeName, state.schema);
+      const { matches, unknownFields } = countMessagesOfType(decoded, CV1_NODE_TYPE);
+      if (matches > 0 && unknownFields === 0) return typeName;
+    } catch (error) {
+      // Try the next candidate.
+    }
+  }
+  return null;
+}
+
+function findCircuitsV1Graphs() {
+  const graphs = [];
+  const undecodedSources = [];
+  const detectedDecodes = new Map();
+
+  const collectGraphs = (message, basePath) => walkMessage(message, {
+    onMessage(inner, path) {
+      if (inner.typeName === CV1_GRAPH_TYPE) graphs.push({ path: [...basePath, ...copyPath(path)], message: inner });
+    },
+  });
+
+  collectGraphs(state.root, []);
+
+  const byteSources = [];
+  walkMessage(state.root, {
+    onValue(value, entry, path) {
+      if (value instanceof Uint8Array && value.length > 0 && entry.field?.name === "circuit_data") {
+        byteSources.push({ bytes: value, path: copyPath(path) });
+      }
+    },
+  });
+  for (const source of byteSources) {
+    const typeName = detectCircuitsV1Type(source.bytes);
+    if (!typeName) {
+      undecodedSources.push(source);
+      continue;
+    }
+    detectedDecodes.set(source.bytes, typeName);
+    collectGraphs(decodeBytesAs(source.bytes, typeName, state.schema), [...source.path, { decodeAs: typeName }]);
+  }
+  return { graphs, undecodedSources, detectedDecodes };
+}
+
+// CV1 chips are physical room objects; their persistence views carry circuit_node_id and a world transform.
+function findCircuitObjects() {
+  const objectsByCircuitId = new Map();
+  walkMessage(state.root, {
+    onMessage(message, path) {
+      if (message.typeName !== "rec_room.PersistenceViewData") return;
+      const circuitNodeData = message.get("circuit_node_data");
+      if (!(circuitNodeData instanceof DecodedMessage)) return;
+      const circuitId = circuitNodeData.get("circuit_node_id") ?? 0;
+      if (objectsByCircuitId.has(circuitId)) return;
+      const position = message.get("transform")?.get("position");
+      objectsByCircuitId.set(circuitId, {
+        message,
+        path: copyPath(path),
+        position: position ? { x: position.get("x") ?? 0, y: position.get("y") ?? 0, z: position.get("z") ?? 0 } : null,
+      });
+    },
+  });
+  return objectsByCircuitId;
+}
+
+// The prefab a CV1 chip's room object was spawned from identifies it more precisely than its node type.
+function prefabIdOf(objectMessage) {
+  const prefabBytes = objectMessage?.get("spawnable_tool_data")?.get("prefab_id");
+  if (!(prefabBytes instanceof Uint8Array) || prefabBytes.length === 0) return null;
+  return bytesToGuidString(prefabBytes) || bytesToHex(prefabBytes).replace(/ /g, "");
+}
+
+function describeCircuitsV1Type(nodeType) {
+  if (!(nodeType instanceof Uint8Array) || nodeType.length === 0) return null;
+  if (nodeType.length === 16) return bytesToGuidString(nodeType);
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(nodeType);
+  return /^[\x20-\x7e]+$/.test(text) ? text : bytesToHex(nodeType);
+}
+
+function isZeroPosition(position) {
+  return !position || (position.x === 0 && position.y === 0 && position.z === 0);
+}
+
+function buildCircuitsV2Graphs() {
+  const boardNameByGraphId = new Map();
+  const graphs = state.analysis.circuitGraphs.map(({ path, message }) => {
+    const graphId = guidOf(message, "graph_id", "DEPRECATED_graph_id");
+    const nodeEntry = message.getEntryByName("node_datas");
+    const nodes = (message.get("node_datas") || []).map((node, index) => {
+      const graphNodeData = node.get("graph_node_data");
+      const innerGraphId = graphNodeData ? guidOf(graphNodeData, "inner_graph_id", "DEPRECATED_inner_graph_id") : null;
+      const position = node.get("transform_data")?.get("local_position");
+      const chip = {
+        index,
+        message: node,
+        id: guidOf(node, "node_id", "DEPRECATED_node_id") || `index-${index}`,
+        name: node.get("node_name") || "",
+        typeId: guidOf(node, "node_type", "DEPRECATED_node_type"),
+        innerGraphId,
+        position: { x: position?.get("x") ?? 0, y: position?.get("y") ?? 0, z: position?.get("z") ?? 0 },
+        path: [...path, makeStep(nodeEntry, index)],
+        objectPath: null,
+        objectMessage: null,
+      };
+      if (innerGraphId) boardNameByGraphId.set(innerGraphId, chip.name || "Circuit board");
+      return chip;
+    });
+    const edges = (message.get("edges") || []).map((edge) => ({
+      sourceId: guidOf(edge, "src_node_id", "DEPRECATED_src_node_id"),
+      sourceGroup: edge.get("src_port_group_id") ?? 0,
+      sourcePort: edge.get("src_port_id") ?? 0,
+      targetId: guidOf(edge, "dst_node_id", "DEPRECATED_dst_node_id"),
+      targetGroup: edge.get("dst_port_group_id") ?? 0,
+      targetPort: edge.get("dst_port_id") ?? 0,
+    }));
+    const depth = path.filter((step) => step.name === "child_graphs").length;
+    return { version: 2, id: graphId, path, message, nodes, edges, depth };
+  });
+  for (const graph of graphs) {
+    graph.title = graph.depth === 0 ? "Room circuits" : boardNameByGraphId.get(graph.id) || `Board ${graph.id ? graph.id.slice(0, 8) : "?"}`;
+  }
+  return graphs;
+}
+
+function buildCircuitsV1Graphs(sources, objectsByCircuitId) {
+  const graphIdByMessage = new Map();
+  sources.forEach(({ path, message }) => {
+    const guidBytes = message.get("node_graph_guid");
+    const guid = guidBytes instanceof Uint8Array && guidBytes.length > 0 ? bytesToGuidString(guidBytes) || bytesToHex(guidBytes) : null;
+    graphIdByMessage.set(message, guid ? `v1:${guid}` : `v1:${pathToText(path)}`);
+  });
+
+  const boardNameByGraphId = new Map();
+  const graphs = sources.map(({ path, message }) => {
+    const graphId = graphIdByMessage.get(message);
+    const nodeEntry = message.getEntryByName("circuit_nodes");
+    const edges = [];
+    const seenEdges = new Set();
+
+    const nodes = (message.get("circuit_nodes") || []).map((node, index) => {
+      const circuitId = node.get("node_id") ?? 0;
+      const linkedObject = objectsByCircuitId.get(circuitId);
+      const ownPosition = node.get("transform_data")?.get("position");
+      let position = ownPosition ? { x: ownPosition.get("x") ?? 0, y: ownPosition.get("y") ?? 0, z: ownPosition.get("z") ?? 0 } : null;
+      if (isZeroPosition(position) && linkedObject?.position) position = linkedObject.position;
+      const innerGraph = node.get("internal_graph_data")?.get("internal_node_graph");
+      const innerGraphId = innerGraph ? graphIdByMessage.get(innerGraph) || null : null;
+      const chip = {
+        index,
+        message: node,
+        id: String(circuitId),
+        name: node.get("node_name") || "",
+        typeId: describeCircuitsV1Type(node.get("node_type")),
+        innerGraphId,
+        position: position || { x: 0, y: 0, z: 0 },
+        path: [...path, makeStep(nodeEntry, index)],
+        objectPath: linkedObject ? linkedObject.path : null,
+        objectMessage: linkedObject ? linkedObject.message : null,
+        prefabId: prefabIdOf(linkedObject?.message),
+      };
+      if (innerGraphId) boardNameByGraphId.set(innerGraphId, chip.name || `Chip ${circuitId}`);
+
+      for (const link of node.get("circuit_links") || []) {
+        const edge = {
+          sourceId: String(link.get("source_node_id") ?? 0),
+          sourceGroup: null,
+          sourcePort: link.get("output_slot") ?? 0,
+          targetId: String(link.get("dest_node_id") ?? 0),
+          targetGroup: null,
+          targetPort: link.get("input_slot") ?? 0,
+          linkType: link.get("link_type") ?? 0,
+        };
+        const key = `${edge.sourceId}:${edge.sourcePort}>${edge.targetId}:${edge.targetPort}:${edge.linkType}`;
+        if (seenEdges.has(key)) continue;
+        seenEdges.add(key);
+        edges.push(edge);
+      }
+      return chip;
+    });
+
+    const depth = path.filter((step) => step.name === "internal_node_graph").length;
+    return { version: 1, id: graphId, path, message, nodes, edges, depth };
+  });
+
+  let topLevelNumber = 0;
+  for (const graph of graphs) {
+    if (graph.depth === 0) {
+      topLevelNumber++;
+      graph.title = topLevelNumber === 1 ? "Room circuits (CV1)" : `Circuit graph ${topLevelNumber} (CV1)`;
+    } else {
+      graph.title = boardNameByGraphId.get(graph.id) || "Inner graph";
+    }
+  }
+  return graphs;
+}
+
+function buildCircuitModel() {
+  if (circuitModelCache && circuitModelCache.root === state.root) return circuitModelCache;
+  const circuitsV1 = findCircuitsV1Graphs();
+  const objectsByCircuitId = findCircuitObjects();
+  const graphs = [...buildCircuitsV2Graphs(), ...buildCircuitsV1Graphs(circuitsV1.graphs, objectsByCircuitId)];
+  for (const graph of graphs) {
+    for (const chip of graph.nodes) {
+      chip.typeKey = chip.prefabId ? `cv1prefab:${chip.prefabId}` : chipTypeKey(graph.version, chip.typeId);
+    }
+  }
+  circuitModelCache = {
+    root: state.root,
+    graphs,
+    undecodedSources: circuitsV1.undecodedSources,
+    detectedDecodes: circuitsV1.detectedDecodes,
+    circuitObjectCount: objectsByCircuitId.size,
+    chipTypes: computeChipTypes(graphs),
+  };
+  return circuitModelCache;
+}
+
+function renderCircuits() {
+  const model = buildCircuitModel();
+  if (model.graphs.every((graph) => graph.nodes.length === 0)) return renderNoCircuits(model);
+
+  if (state.circuits.graphIndex === null || state.circuits.graphIndex >= model.graphs.length) {
+    state.circuits.graphIndex = Math.max(0, model.graphs.findIndex((graph) => graph.nodes.length > 0));
+  }
+  const graphIndex = state.circuits.graphIndex;
+  const graph = model.graphs[graphIndex];
+
+  const graphButton = (candidate, index) => el("button", {
+    class: `result-item collection-item ${candidate.depth === 0 ? "" : candidate.depth <= 3 ? `graph-depth-${candidate.depth}` : "graph-depth-deep"}`,
+    "aria-current": String(index === graphIndex),
+    onclick: () => selectGraph(index),
+  },
+  el("span", { class: "collection-pattern" }, candidate.title),
+  el("span", { class: "collection-type" }, `${candidate.nodes.length} chips, ${candidate.edges.length} wires`),
+  el("span", { class: "collection-count" }, ""));
+
+  const sections = [];
+  for (const version of [2, 1]) {
+    const entries = model.graphs.map((candidate, index) => ({ candidate, index })).filter(({ candidate }) => candidate.version === version);
+    if (entries.length === 0) continue;
+    sections.push(el("div", { class: "result-note" }, version === 2 ? "Circuits V2" : "Circuits V1"));
+    sections.push(entries.map(({ candidate, index }) => graphButton(candidate, index)));
+  }
+
+  const sidebar = el("aside", { class: "panel sidebar" },
+    el("h3", {}, "Boards"),
+    el("div", { class: "sidebar-scroll" }, sections, renderChipTypeList(model)),
+  );
+
+  return el("div", { class: "split" }, sidebar, renderCircuitBoard(model, graph));
+}
+
+function renderNoCircuits(model) {
+  const notes = [el("p", {}, "No circuit chips were found in this file.")];
+  for (const source of model.undecodedSources) {
+    notes.push(el("p", {},
+      `${pathToText(source.path)} holds ${formatByteSize(source.bytes.length)} of circuit data that doesn't decode as the circuits_v1 types in this schema. `,
+      el("button", { class: "button is-small", onclick: () => navigateTo(source.path) }, "Inspect the bytes"),
+    ));
+  }
+  if (model.circuitObjectCount > 0) {
+    notes.push(el("p", {}, `${model.circuitObjectCount} room objects are CV1 chips (they have circuit_node_data). Find them in Collections by picking the circuit_node_data field.`));
+  }
+  return el("div", { class: "panel empty-note" }, notes);
+}
+
+function selectGraph(index) {
+  state.circuits.graphIndex = index;
+  state.circuits.selectedNodeId = null;
+  state.circuits.transform = null;
+  render();
+}
+
+function projectPosition(position, axis) {
+  if (axis === "xz") return { horizontal: position.x, vertical: -position.z };
+  if (axis === "zy") return { horizontal: position.z, vertical: -position.y };
+  return { horizontal: position.x, vertical: -position.y };
+}
+
+function layoutChips(nodes, axis) {
+  const projected = nodes.map((node) => projectPosition(node.position, axis));
+  const horizontalValues = projected.map((point) => point.horizontal);
+  const verticalValues = projected.map((point) => point.vertical);
+  const spanHorizontal = Math.max(...horizontalValues) - Math.min(...horizontalValues);
+  const spanVertical = Math.max(...verticalValues) - Math.min(...verticalValues);
+  const layout = new Map();
+
+  if (nodes.length === 0) return { layout, usedGrid: false };
+  if (!(spanHorizontal > 1e-6 || spanVertical > 1e-6)) {
+    const columns = Math.ceil(Math.sqrt(nodes.length));
+    nodes.forEach((node, index) => {
+      layout.set(node.id, { x: (index % columns) * (CIRCUIT_CHIP_WIDTH + 60), y: Math.floor(index / columns) * (CIRCUIT_CHIP_HEIGHT + 50) });
+    });
+    return { layout, usedGrid: true };
+  }
+
+  const targetSpan = Math.max(900, Math.sqrt(nodes.length) * 260);
+  const scale = targetSpan / Math.max(spanHorizontal, spanVertical);
+  const minHorizontal = Math.min(...horizontalValues);
+  const minVertical = Math.min(...verticalValues);
+  nodes.forEach((node, index) => {
+    layout.set(node.id, {
+      x: (projected[index].horizontal - minHorizontal) * scale,
+      y: (projected[index].vertical - minVertical) * scale,
+    });
+  });
+  return { layout, usedGrid: false };
+}
+
+function truncateLabel(text, maxLength) {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function renderCircuitBoard(model, graph) {
+  const { layout, usedGrid } = layoutChips(graph.nodes, state.circuits.axis);
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const resolvedEdges = graph.edges.filter((edge) => nodesById.has(edge.sourceId) && nodesById.has(edge.targetId));
+  const unresolvedCount = graph.edges.length - resolvedEdges.length;
+
+  const wireLayer = svgEl("g", {});
+  const chipLayer = svgEl("g", {});
+  const viewport = svgEl("g", {}, wireLayer, chipLayer);
+  const svg = svgEl("svg", { role: "img", "aria-label": `Circuit diagram for ${graph.title}` }, viewport);
+
+  const wireElements = resolvedEdges.map((edge) => {
+    const start = layout.get(edge.sourceId);
+    const end = layout.get(edge.targetId);
+    const startX = start.x + CIRCUIT_CHIP_WIDTH / 2;
+    const endX = end.x - CIRCUIT_CHIP_WIDTH / 2;
+    const handle = Math.max(40, Math.abs(endX - startX) / 2);
+    const wire = svgEl("path", {
+      class: "wire",
+      d: `M ${startX} ${start.y} C ${startX + handle} ${start.y}, ${endX - handle} ${end.y}, ${endX} ${end.y}`,
+    });
+    wire.dataset.source = edge.sourceId;
+    wire.dataset.target = edge.targetId;
+    wireLayer.append(wire);
+    return wire;
+  });
+
+  const chipElements = new Map();
+  for (const node of graph.nodes) {
+    const position = layout.get(node.id);
+    const isBoard = Boolean(node.innerGraphId);
+    const chip = svgEl("g", {
+      class: `chip-node${isBoard ? " is-board" : ""}`,
+      transform: `translate(${position.x - CIRCUIT_CHIP_WIDTH / 2} ${position.y - CIRCUIT_CHIP_HEIGHT / 2})`,
+      tabindex: "0",
+      role: "button",
+      "aria-label": node.name || "Unnamed chip",
+    },
+    svgEl("rect", { width: CIRCUIT_CHIP_WIDTH, height: CIRCUIT_CHIP_HEIGHT, rx: 2 }),
+    svgEl("rect", { class: "chip-stripe", width: 6, height: CIRCUIT_CHIP_HEIGHT - 8, x: 4, y: 4, rx: 2, style: `fill: hsl(${chipTypeHue(node.typeKey)} 65% 55%)` }),
+    svgEl("text", { x: 16, y: 17 }, truncateLabel(chipDisplayName(node, graph), 19)),
+    svgEl("text", { x: 16, y: 32, class: "chip-sub" }, truncateLabel(chipSubtitle(node), 24)),
+    svgEl("title", {}, `${chipDisplayName(node, graph)}\n${node.typeId || ""}`));
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectChip(node.id);
+    });
+    chip.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") selectChip(node.id);
+    });
+    chip.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      if (node.innerGraphId) openBoard(model, node.innerGraphId);
+    });
+    chipLayer.append(chip);
+    chipElements.set(node.id, chip);
+  }
+
+  const infoPanel = el("div", { class: "circuit-info" });
+
+  function applySelection() {
+    const selectedId = state.circuits.selectedNodeId;
+    const linkedIds = new Set();
+    for (const wire of wireElements) {
+      const isActive = selectedId && (wire.dataset.source === selectedId || wire.dataset.target === selectedId);
+      wire.classList.toggle("is-active", Boolean(isActive));
+      if (isActive) {
+        linkedIds.add(wire.dataset.source);
+        linkedIds.add(wire.dataset.target);
+        wire.parentNode.append(wire);
+      }
+    }
+    for (const [nodeId, chip] of chipElements) {
+      chip.classList.toggle("is-selected", nodeId === selectedId);
+      chip.classList.toggle("is-linked", nodeId !== selectedId && linkedIds.has(nodeId));
+      chip.classList.toggle("is-type-match", nodesById.get(nodeId)?.typeKey === state.circuits.selectedTypeKey);
+    }
+    infoPanel.replaceChildren(...renderChipInfo(model, graph, nodesById));
+  }
+
+  function selectChip(nodeId) {
+    state.circuits.selectedNodeId = state.circuits.selectedNodeId === nodeId ? null : nodeId;
+    applySelection();
+  }
+
+  const transform = state.circuits.transform || { scale: 1, translateX: 0, translateY: 0 };
+  const applyTransform = () => {
+    viewport.setAttribute("transform", `translate(${transform.translateX} ${transform.translateY}) scale(${transform.scale})`);
+    state.circuits.transform = transform;
+  };
+
+  function fitToView() {
+    const width = svg.clientWidth || 800;
+    const height = svg.clientHeight || 500;
+    if (graph.nodes.length === 0) return;
+    const xs = [...layout.values()].map((point) => point.x);
+    const ys = [...layout.values()].map((point) => point.y);
+    const minX = Math.min(...xs) - CIRCUIT_CHIP_WIDTH;
+    const maxX = Math.max(...xs) + CIRCUIT_CHIP_WIDTH;
+    const minY = Math.min(...ys) - CIRCUIT_CHIP_HEIGHT * 2;
+    const maxY = Math.max(...ys) + CIRCUIT_CHIP_HEIGHT * 2;
+    transform.scale = Math.min(2, width / (maxX - minX), height / (maxY - minY));
+    transform.translateX = (width - (maxX - minX) * transform.scale) / 2 - minX * transform.scale;
+    transform.translateY = (height - (maxY - minY) * transform.scale) / 2 - minY * transform.scale;
+    applyTransform();
+  }
+
+  svg.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const bounds = svg.getBoundingClientRect();
+    const cursorX = event.clientX - bounds.left;
+    const cursorY = event.clientY - bounds.top;
+    const factor = Math.exp(-event.deltaY * 0.0015);
+    const newScale = Math.min(8, Math.max(0.02, transform.scale * factor));
+    transform.translateX = cursorX - (cursorX - transform.translateX) * (newScale / transform.scale);
+    transform.translateY = cursorY - (cursorY - transform.translateY) * (newScale / transform.scale);
+    transform.scale = newScale;
+    applyTransform();
+  }, { passive: false });
+
+  let panStart = null;
+  svg.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".chip-node")) return;
+    panStart = { pointerX: event.clientX, pointerY: event.clientY, translateX: transform.translateX, translateY: transform.translateY, moved: false };
+    svg.setPointerCapture(event.pointerId);
+    svg.classList.add("is-panning");
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (!panStart) return;
+    const deltaX = event.clientX - panStart.pointerX;
+    const deltaY = event.clientY - panStart.pointerY;
+    if (Math.abs(deltaX) + Math.abs(deltaY) > 3) panStart.moved = true;
+    transform.translateX = panStart.translateX + deltaX;
+    transform.translateY = panStart.translateY + deltaY;
+    applyTransform();
+  });
+  svg.addEventListener("pointerup", () => {
+    if (panStart && !panStart.moved && state.circuits.selectedNodeId) {
+      state.circuits.selectedNodeId = null;
+      applySelection();
+    }
+    panStart = null;
+    svg.classList.remove("is-panning");
+  });
+
+  const axisSelect = el("select", {
+    class: "text-input",
+    "aria-label": "Which position axes to lay chips out on",
+    onchange: (event) => {
+      state.circuits.axis = event.target.value;
+      state.circuits.transform = null;
+      render();
+    },
+  },
+  [["xy", "Front (X, Y)"], ["xz", "Top (X, Z)"], ["zy", "Side (Z, Y)"]].map(([value, label]) => el("option", { value, selected: state.circuits.axis === value }, label)));
+
+  const notes = [];
+  if (usedGrid) notes.push("Chips have no saved positions, so they're laid out in a grid.");
+  if (unresolvedCount > 0) notes.push(`${unresolvedCount} wires connect to chips outside this board and aren't drawn.`);
+  if (graph.edges.length === 0 && graph.nodes.length > 1) notes.push("No wires are stored on this graph. Newer saves may keep them in circuit_v2_data.entities.");
+
+  const canvas = el("div", { class: "circuit-canvas" }, svg, el("div", { class: "circuit-hint" }, "Drag to pan, scroll to zoom, click a chip for details"));
+  const panel = el("div", { class: "panel" },
+    el("div", { class: "circuit-toolbar" },
+      el("span", { class: "toolbar-title" }, graph.title),
+      el("span", { class: "node-meta" }, `${graph.nodes.length} chips, ${resolvedEdges.length} wires`),
+      axisSelect,
+      el("button", { class: "button is-small", onclick: fitToView }, "Fit"),
+      el("button", { class: "button is-small", onclick: () => navigateTo(graph.path) }, "Open in Explore"),
+    ),
+    notes.length > 0 ? el("div", { class: "decoded-note" }, notes.join(" ")) : null,
+    canvas,
+    infoPanel,
+  );
+
+  requestAnimationFrame(() => {
+    if (state.circuits.transform) applyTransform();
+    else fitToView();
+    applySelection();
+  });
+  return panel;
+}
+
+function openBoard(model, graphId) {
+  const index = model.graphs.findIndex((graph) => graph.id === graphId);
+  if (index === -1) {
+    showToast("That board's graph isn't in this file");
+    return;
+  }
+  selectGraph(index);
+}
+
+function renderChipInfo(model, graph, nodesById) {
+  const selectedId = state.circuits.selectedNodeId;
+  if (!selectedId) {
+    const selectedType = model.chipTypes.get(state.circuits.selectedTypeKey);
+    if (selectedType) return [renderChipTypeEditor(selectedType)];
+    return [el("p", { class: "node-meta" }, "Select a chip to see its settings and wires, or pick a chip type on the left to name it. Double-click a board to open it.")];
+  }
+  const node = nodesById.get(selectedId);
+  if (!node) return [];
+
+  const configEntries = node.message.orderedEntries().filter((entry) => entry.field && !GENERIC_CHIP_FIELDS.has(entry.field.name) && !entry.field.name.startsWith("DEPRECATED_"));
+  const portLabel = (group, port) => (group === null ? `slot ${port}` : `${group}.${port}`);
+  const chipLabel = (nodeId) => (nodesById.has(nodeId) ? chipDisplayName(nodesById.get(nodeId), graph) : `Chip ${nodeId}`);
+  const describeEnd = (nodeId, group, port) => `${chipLabel(nodeId)} [${portLabel(group, port)}]`;
+  const incoming = graph.edges.filter((edge) => edge.targetId === selectedId);
+  const outgoing = graph.edges.filter((edge) => edge.sourceId === selectedId);
+  const wireItem = (label, otherId, onPick) => el("li", {}, el("button", { onclick: onPick }, label));
+
+  return [
+    el("h3", {}, chipDisplayName(node, graph)),
+    el("dl", { class: "info-grid" },
+      el("dt", {}, "Chip type"), el("dd", {}, node.typeId || "unknown"),
+      el("dt", {}, "Chip ID"), el("dd", {}, node.id),
+      el("dt", {}, "Position"), el("dd", {}, `(${formatNumber(node.position.x)}, ${formatNumber(node.position.y)}, ${formatNumber(node.position.z)})`),
+      graph.version === 2 ? [el("dt", {}, "Port groups"), el("dd", {}, String((node.message.get("node_groups") || []).length))] : null,
+      configEntries.map((entry) => [
+        el("dt", {}, entry.field.name),
+        el("dd", {}, summarizeValue(entry.values[entry.values.length - 1], entry.field)),
+      ]),
+    ),
+    el("div", { class: "decode-row" },
+      el("button", { class: "button is-small", onclick: () => navigateTo(node.path) }, "Open chip in Explore"),
+      node.innerGraphId ? el("button", { class: "button is-small", onclick: () => openBoard(model, node.innerGraphId) }, "Open board") : null,
+      node.objectPath ? el("button", { class: "button is-small", onclick: () => navigateTo(node.objectPath) }, "Open room object") : null,
+      el("button", { class: "button is-small", onclick: () => copyText(node.typeId || "", "chip type") }, "Copy chip type"),
+    ),
+    incoming.length > 0 ? [el("h3", {}, `Wires in (${incoming.length})`), el("ul", { class: "wire-list" }, incoming.map((edge) => wireItem(
+      `${describeEnd(edge.sourceId, edge.sourceGroup, edge.sourcePort)} → [${portLabel(edge.targetGroup, edge.targetPort)}]`,
+      edge.sourceId,
+      () => { state.circuits.selectedNodeId = edge.sourceId; render(); },
+    )))] : null,
+    outgoing.length > 0 ? [el("h3", {}, `Wires out (${outgoing.length})`), el("ul", { class: "wire-list" }, outgoing.map((edge) => wireItem(
+      `[${portLabel(edge.sourceGroup, edge.sourcePort)}] → ${describeEnd(edge.targetId, edge.targetGroup, edge.targetPort)}`,
+      edge.targetId,
+      () => { state.circuits.selectedNodeId = edge.targetId; render(); },
+    )))] : null,
+    model.chipTypes.has(node.typeKey) ? renderChipTypeEditor(model.chipTypes.get(node.typeKey)) : null,
+  ].flat().filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// Chip type naming
+// ---------------------------------------------------------------------------
+
+// The export only stores each chip's type as an ID. Names come from the viewer, saved in this browser.
+const CHIP_LABEL_STORAGE_KEY = "room-inspector:chip-type-names";
+const OBJECT_FIELDS_IGNORED_FOR_HINTS = new Set([
+  "id", "transform", "circuit_node_data", "child_views", "encoded_entity_idx",
+  // Present on every room object, so they don't tell chip types apart.
+  "spawnable_tool_data", "tool_entity_data", "creation_object_data", "tagged_tool_data", "tool_cleanup_data", "synced_data",
+]);
+
+function loadChipLabels() {
+  try {
+    const stored = localStorage.getItem(CHIP_LABEL_STORAGE_KEY);
+    const parsed = stored ? JSON.parse(stored) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function saveChipLabels() {
+  try {
+    localStorage.setItem(CHIP_LABEL_STORAGE_KEY, JSON.stringify(state.chipLabels));
+  } catch (error) {
+    showToast("Couldn't save names in this browser. Copy them out to keep them.");
+  }
+}
+
+function setChipLabel(typeKey, label) {
+  const trimmed = label.trim();
+  if (trimmed) state.chipLabels[typeKey] = trimmed;
+  else delete state.chipLabels[typeKey];
+  saveChipLabels();
+}
+
+function chipTypeKey(version, typeId) {
+  return `cv${version}:${typeId || "none"}`;
+}
+
+function chipTypeName(typeKey, prefabId) {
+  return state.chipLabels[typeKey] || prefabNameFor(prefabId) || null;
+}
+
+function chipDisplayName(chip, graph) {
+  return chip.name || chipTypeName(chip.typeKey, chip.prefabId) || (graph.version === 1 ? `Chip ${chip.id}` : "(unnamed)");
+}
+
+function chipSubtitle(chip) {
+  if (chip.innerGraphId) return "board";
+  const typeName = chipTypeName(chip.typeKey, chip.prefabId);
+  if (chip.name && typeName) return typeName;
+  if (typeName) return `#${chip.id}`;
+  return chip.typeId ? chip.typeId.slice(0, 13) : "no type";
+}
+
+function chipTypeHue(typeKey) {
+  let hash = 0;
+  for (const character of typeKey) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return hash % 360;
+}
+
+function incrementCount(counts, key) {
+  counts.set(key, (counts.get(key) || 0) + 1);
+}
+
+// Gather clues per chip type: how many pins its wires use, which settings are set, what the room object carries.
+function computeChipTypes(graphs) {
+  const types = new Map();
+  const statsFor = (chip, graph) => {
+    let stats = types.get(chip.typeKey);
+    if (!stats) {
+      stats = {
+        key: chip.typeKey,
+        version: graph.version,
+        typeId: chip.prefabId || chip.typeId,
+        isPrefab: Boolean(chip.prefabId),
+        nodeTypeIds: new Set(),
+        count: 0,
+        inputPins: new Set(),
+        outputPins: new Set(),
+        settings: new Map(),
+        objectComponents: new Map(),
+        namesSeen: new Set(),
+        boardCount: 0,
+      };
+      types.set(chip.typeKey, stats);
+    }
+    return stats;
+  };
+
+  for (const graph of graphs) {
+    const chipsById = new Map(graph.nodes.map((chip) => [chip.id, chip]));
+    for (const chip of graph.nodes) {
+      const stats = statsFor(chip, graph);
+      stats.count++;
+      if (chip.typeId) stats.nodeTypeIds.add(chip.typeId);
+      if (chip.name) stats.namesSeen.add(chip.name);
+      if (chip.innerGraphId) stats.boardCount++;
+      for (const entry of chip.message.orderedEntries()) {
+        const name = entry.field ? entry.field.name : `#${entry.number}`;
+        if (!GENERIC_CHIP_FIELDS.has(name) && !name.startsWith("DEPRECATED_")) incrementCount(stats.settings, name);
+      }
+      if (chip.objectMessage) {
+        for (const entry of chip.objectMessage.orderedEntries()) {
+          const name = entry.field ? entry.field.name : `#${entry.number}`;
+          if (!OBJECT_FIELDS_IGNORED_FOR_HINTS.has(name)) incrementCount(stats.objectComponents, name);
+        }
+      }
+    }
+    for (const edge of graph.edges) {
+      const source = chipsById.get(edge.sourceId);
+      const target = chipsById.get(edge.targetId);
+      const pinLabel = (group, port) => (group === null ? String(port) : `${group}.${port}`);
+      if (source) types.get(source.typeKey).outputPins.add(pinLabel(edge.sourceGroup, edge.sourcePort));
+      if (target) types.get(target.typeKey).inputPins.add(pinLabel(edge.targetGroup, edge.targetPort));
+    }
+  }
+  return types;
+}
+
+function describePins(pins) {
+  if (pins.size === 0) return "none wired";
+  const sorted = [...pins].sort((first, second) => first.localeCompare(second, undefined, { numeric: true }));
+  return `${sorted.join(", ")} (${pins.size} used)`;
+}
+
+function describeCounts(counts, total) {
+  return [...counts.entries()]
+    .sort((first, second) => second[1] - first[1])
+    .map(([name, count]) => (count === total ? name : `${name} ×${count}`))
+    .join(", ");
+}
+
+function renderChipTypeEditor(stats) {
+  const prefabName = stats.isPrefab ? prefabNameFor(stats.typeId) : null;
+  const nameInput = el("input", {
+    class: "text-input",
+    value: state.chipLabels[stats.key] || "",
+    placeholder: prefabName ? `${prefabName} (from PrefabIds.csv), or type your own name` : "What is this chip? e.g. AND Gate",
+    "aria-label": "Name for this chip type",
+  });
+  const save = () => {
+    setChipLabel(stats.key, nameInput.value);
+    showToast(nameInput.value.trim() ? `Named ${stats.count} ${stats.count === 1 ? "chip" : "chips"} "${nameInput.value.trim()}"` : "Name cleared");
+    render();
+  };
+  nameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") save();
+  });
+
+  const clues = [
+    [stats.isPrefab ? "Prefab ID" : "Type ID", stats.typeId || "none"],
+    ...(prefabName ? [["Prefab type", state.prefabNames.get(stats.typeId.toLowerCase())]] : []),
+    ...(stats.isPrefab ? [["Node type", [...stats.nodeTypeIds].join(", ") || "none"]] : []),
+    ["In this room", `${stats.count} ${stats.count === 1 ? "chip" : "chips"}${stats.boardCount ? `, ${stats.boardCount} as boards` : ""}`],
+    [stats.version === 1 ? "Input slots wired" : "Input pins wired", describePins(stats.inputPins)],
+    [stats.version === 1 ? "Output slots wired" : "Output pins wired", describePins(stats.outputPins)],
+  ];
+  if (stats.settings.size > 0) clues.push(["Settings set", describeCounts(stats.settings, stats.count)]);
+  if (stats.objectComponents.size > 0) clues.push(["Room object has", describeCounts(stats.objectComponents, stats.count)]);
+  if (stats.namesSeen.size > 0) clues.push(["Names given", [...stats.namesSeen].slice(0, 6).map((name) => JSON.stringify(name)).join(", ")]);
+
+  return el("div", { class: "type-editor" },
+    el("h3", {}, el("span", { class: "type-swatch", style: `background: hsl(${chipTypeHue(stats.key)} 65% 55%)` }), chipTypeName(stats.key, stats.isPrefab ? stats.typeId : null) || "Unnamed chip type"),
+    el("div", { class: "decode-row" }, nameInput, el("button", { class: "button", onclick: save }, "Save name")),
+    el("dl", { class: "info-grid" }, clues.map(([term, detail]) => [el("dt", {}, term), el("dd", {}, detail)])),
+  );
+}
+
+function renderChipTypeList(model) {
+  const types = [...model.chipTypes.values()].sort((first, second) => second.count - first.count);
+  if (types.length === 0) return null;
+  const showVersion = new Set(types.map((stats) => stats.version)).size > 1;
+  const typeNameOf = (stats) => chipTypeName(stats.key, stats.isPrefab ? stats.typeId : null);
+  const namedCount = types.filter((stats) => typeNameOf(stats)).length;
+  return [
+    el("div", { class: "result-note" }, `Chip types (${namedCount} of ${types.length} named)`),
+    types.map((stats) => el("button", {
+      class: "result-item collection-item",
+      "aria-current": String(state.circuits.selectedTypeKey === stats.key),
+      onclick: () => {
+        state.circuits.selectedTypeKey = state.circuits.selectedTypeKey === stats.key ? null : stats.key;
+        state.circuits.selectedNodeId = null;
+        render();
+      },
+    },
+    el("span", { class: "collection-pattern" },
+      el("span", { class: "type-swatch", style: `background: hsl(${chipTypeHue(stats.key)} 65% 55%)` }),
+      typeNameOf(stats) || (stats.typeId ? stats.typeId.slice(0, 13) : "no type")),
+    el("span", { class: "collection-type" }, `${showVersion ? `CV${stats.version}, ` : ""}${typeNameOf(stats) ? (stats.typeId || "").slice(0, 13) : "unnamed"}`),
+    el("span", { class: "collection-count" }, stats.count))),
+    el("div", { class: "decode-row label-sharing" },
+      el("button", { class: "button is-small", onclick: () => copyText(describeAllChipTypes(types), "chip type clues") }, "Copy clues for all types")),
+    renderLabelSharing(),
+  ];
+}
+
+function describeAllChipTypes(types) {
+  return types.map((stats) => {
+    const lines = [
+      `${chipTypeName(stats.key, stats.isPrefab ? stats.typeId : null) || "unnamed"}: ${stats.isPrefab ? "prefab " : ""}${stats.typeId || "no type"}, CV${stats.version}, ${stats.count} chips${stats.boardCount ? ` (${stats.boardCount} boards)` : ""}`,
+      ...(stats.isPrefab ? [`  node type: ${[...stats.nodeTypeIds].join(", ") || "none"}`] : []),
+      `  inputs wired: ${describePins(stats.inputPins)}`,
+      `  outputs wired: ${describePins(stats.outputPins)}`,
+    ];
+    if (stats.settings.size > 0) lines.push(`  settings: ${describeCounts(stats.settings, stats.count)}`);
+    if (stats.objectComponents.size > 0) lines.push(`  room object: ${describeCounts(stats.objectComponents, stats.count)}`);
+    if (stats.namesSeen.size > 0) lines.push(`  names: ${[...stats.namesSeen].slice(0, 6).join(", ")}`);
+    return lines.join("\n");
+  }).join("\n\n");
+}
+
+function renderLabelSharing() {
+  const exportArea = el("textarea", { class: "text-input label-share", rows: "4", "aria-label": "Chip type names as JSON" });
+  exportArea.value = JSON.stringify(state.chipLabels, null, 1);
+  return el("details", { class: "label-sharing" },
+    el("summary", {}, "Copy or paste chip names"),
+    el("p", { class: "node-meta" }, "Names are saved in this browser and keyed by type ID, so they carry over to other rooms. Paste someone else's list here to use their names."),
+    exportArea,
+    el("div", { class: "decode-row" },
+      el("button", { class: "button is-small", onclick: () => copyText(JSON.stringify(state.chipLabels, null, 1), "chip names") }, "Copy names"),
+      el("button", {
+        class: "button is-small",
+        onclick: () => {
+          try {
+            const pasted = JSON.parse(exportArea.value);
+            if (!pasted || typeof pasted !== "object" || Array.isArray(pasted)) throw new Error("expected an object of type ID to name");
+            let applied = 0;
+            for (const [typeKey, label] of Object.entries(pasted)) {
+              if (typeof label !== "string") continue;
+              setChipLabel(typeKey, label);
+              applied++;
+            }
+            showToast(`Applied ${applied} chip names`);
+            render();
+          } catch (error) {
+            showToast(`Couldn't read those names: ${error.message}`);
+          }
+        },
+      }, "Apply pasted names"),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Schema tab
+// ---------------------------------------------------------------------------
+
+function renderSchema() {
+  const schema = state.schema;
+  const query = state.schemaView.query.trim().toLowerCase();
+  const allTypes = [...schema.messages.values(), ...schema.enums.values()]
+    .filter((type) => !type.fullName.startsWith("google.") && !(type.kind === "message" && type.isMapEntry));
+  const matching = allTypes
+    .filter((type) => !query || type.fullName.toLowerCase().includes(query))
+    .sort((first, second) => {
+      const firstCount = state.analysis?.typeCounts.get(first.fullName) || 0;
+      const secondCount = state.analysis?.typeCounts.get(second.fullName) || 0;
+      return secondCount - firstCount || first.fullName.localeCompare(second.fullName);
+    });
+
+  const listItems = matching.slice(0, SCHEMA_LIST_LIMIT).map((type) => {
+    const count = state.analysis?.typeCounts.get(type.fullName);
+    return el("button", {
+      class: "result-item collection-item",
+      "aria-current": String(type.fullName === state.schemaView.selectedTypeName),
+      onclick: () => {
+        state.schemaView.selectedTypeName = type.fullName;
+        render();
+      },
+    },
+    el("span", { class: "collection-pattern" }, type.fullName),
+    el("span", { class: "collection-type" }, type.kind === "enum" ? "enum" : `${type.fields.length} fields`),
+    el("span", { class: "collection-count" }, count ? count.toLocaleString() : ""));
+  });
+
+  const sidebar = el("aside", { class: "panel sidebar" },
+    el("h3", {}, "Types"),
+    el("input", {
+      class: "text-input",
+      type: "search",
+      placeholder: "Filter types",
+      value: state.schemaView.query,
+      "aria-label": "Filter types",
+      oninput: (event) => {
+        state.schemaView.query = event.target.value;
+        rerenderPreservingFocus(".sidebar input[type=search]");
+      },
+    }),
+    el("div", { class: "result-note" }, state.analysis
+      ? "Numbers show how many times each type appears in the loaded file."
+      : `${matching.length} types`),
+    el("div", { class: "sidebar-scroll" },
+      listItems,
+      matching.length > SCHEMA_LIST_LIMIT ? el("div", { class: "result-note" }, `${matching.length - SCHEMA_LIST_LIMIT} more. Narrow the filter to see them.`) : null),
+  );
+
+  return el("div", { class: "split" }, sidebar, renderSchemaType());
+}
+
+function renderSchemaType() {
+  const typeName = state.schemaView.selectedTypeName;
+  const type = typeName ? state.schema.messages.get(typeName) || state.schema.enums.get(typeName) : null;
+  if (!type) return el("div", { class: "panel empty-note" }, "Pick a type to see its fields.");
+
+  const count = state.analysis?.typeCounts.get(type.fullName) || 0;
+  const header = el("div", { class: "node-header" },
+    el("h2", { class: "node-title" }, type.name),
+    el("span", { class: "field-type" }, type.fullName),
+    el("span", { class: "node-meta" }, type.fileName),
+    el("div", { class: "node-actions" },
+      state.root && type.kind === "message" ? el("span", { class: "node-meta" }, `${count.toLocaleString()} in this file`) : null,
+      state.root && type.kind === "message" && count > 0 ? el("button", {
+        class: "button is-small",
+        onclick: () => {
+          state.search.includeTypes = true;
+          state.tab = "explore";
+          runSearch(type.name);
+        },
+      }, "Find in file") : null,
+    ),
+  );
+
+  if (type.kind === "enum") {
+    return el("div", { class: "panel" }, header, el("div", { class: "enum-values" },
+      type.values.map((value) => el("div", {}, el("span", {}, value.number), value.name))));
+  }
+
+  const usedBy = [];
+  for (const candidate of state.schema.messages.values()) {
+    if (candidate.fields.some((field) => field.typeName === type.fullName)) usedBy.push(candidate.fullName);
+  }
+
+  return el("div", { class: "panel" },
+    header,
+    el("div", { class: "scroll-x" }, el("table", { class: "data" },
+      el("thead", {}, el("tr", {}, el("th", {}, "#"), el("th", {}, "Field"), el("th", {}, "Type"))),
+      el("tbody", {}, type.fields.map((field) => el("tr", {},
+        el("td", { class: "index-cell" }, field.number),
+        el("td", {}, el("span", { class: "field-name" }, field.name), field.explicitOptional ? el("span", { class: "field-number" }, "optional") : null),
+        el("td", {}, renderFieldType(field))))))),
+    usedBy.length > 0 ? el("div", { class: "bytes-section" },
+      el("h3", {}, "Used by"),
+      el("div", { class: "guess-list" }, usedBy.sort().map((name) => el("button", { class: "field-chip", onclick: () => openSchemaType(name) }, shortTypeName(name))))) : null,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Root render
+// ---------------------------------------------------------------------------
+
+function render() {
+  const app = document.getElementById("app");
+  if (!state.root && !(state.tab === "schema" && state.schema)) state.tab = "explore";
+
+  let content;
+  if (state.tab === "schema" && state.schema) content = renderSchema();
+  else if (!state.root) content = renderIntro();
+  else if (state.tab === "collections") content = renderCollections();
+  else if (state.tab === "circuits") content = renderCircuits();
+  else content = renderExplore();
+
+  app.replaceChildren(
+    renderHeader(),
+    el("main", {}, content),
+    el("footer", { class: `status-bar${state.status.isError ? " is-error" : ""}`, role: "status" },
+      el("span", { class: "status-line" }, state.status.text || "Ready")),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Files hosted next to the page
+// ---------------------------------------------------------------------------
+
+// Tried in order, relative to this page. Override with ?schema=, ?prefabs= and ?data= in the page URL.
+const BUNDLED_SCHEMA_PATHS = ["descriptor_set.binpb", "schema/descriptor_set.binpb", "data/descriptor_set.binpb"];
+const BUNDLED_PREFAB_PATHS = ["prefab_registry.csv", "data/prefab_registry.csv", "prefabs/prefab_registry.csv"];
+
+async function fetchFirstAvailable(paths) {
+  for (const path of paths) {
+    try {
+      const response = await fetch(path, { cache: "no-cache" });
+      if (response.ok) return { path, bytes: new Uint8Array(await response.arrayBuffer()) };
+    } catch (error) {
+      // Not hosted here, or opened from disk where the browser blocks this.
+    }
+  }
+  return null;
+}
+
+async function loadBundledFiles() {
+  const parameters = new URLSearchParams(window.location.search);
+  const schemaPaths = parameters.get("schema") ? [parameters.get("schema")] : BUNDLED_SCHEMA_PATHS;
+  const prefabPaths = parameters.get("prefabs") ? [parameters.get("prefabs")] : BUNDLED_PREFAB_PATHS;
+  const loaded = [];
+
+  const schemaFile = await fetchFirstAvailable(schemaPaths);
+  if (schemaFile && !state.schema) {
+    const schema = tryParseDescriptorSet(schemaFile.bytes);
+    if (schema) {
+      state.schema = schema;
+      state.schemaFileName = `${schemaFile.path} (with this page)`;
+      state.bundledSources.schema = schemaFile.path;
+      loaded.push(`the schema (${schema.messages.size} message types)`);
+    }
+  }
+
+  const prefabFile = await fetchFirstAvailable(prefabPaths);
+  if (prefabFile) {
+    const names = tryParsePrefabCsv(prefabFile.path, prefabFile.bytes);
+    if (names) {
+      state.bundledPrefabNames = names;
+      state.bundledSources.prefabs = prefabFile.path;
+      loaded.push(`${names.size.toLocaleString()} prefab names`);
+    }
+  }
+
+  if (parameters.get("data")) {
+    const dataFile = await fetchFirstAvailable([parameters.get("data")]);
+    if (dataFile) {
+      state.dataBytes = dataFile.bytes;
+      state.dataFileName = dataFile.path.split("/").pop();
+      state.bundledSources.data = dataFile.path;
+    } else {
+      setStatus(`Couldn't load ${parameters.get("data")} from the page URL.`, true);
+    }
+  }
+
+  if (loaded.length > 0) setStatus(`Loaded ${loaded.join(" and ")} from this page's folder. Open a room file to start.`);
+  if (state.schema && state.dataBytes && !state.root) {
+    state.rootTypeName = state.schema.guessTypeForFileName(state.dataFileName)
+      || (state.schema.messages.has("rec_room.PersistedRoomData") ? "rec_room.PersistedRoomData" : null);
+    decodeDocument();
+    return;
+  }
+  render();
+}
+
+function setupDragAndDrop() {
+  let dragDepth = 0;
+  const zoneClass = (isHovering) => document.body.classList.toggle("is-drag-over", isHovering);
+  window.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    dragDepth++;
+    zoneClass(true);
+  });
+  window.addEventListener("dragleave", () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) zoneClass(false);
+  });
+  window.addEventListener("dragover", (event) => event.preventDefault());
+  window.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dragDepth = 0;
+    zoneClass(false);
+    if (event.dataTransfer?.files?.length) loadFiles(event.dataTransfer.files);
+  });
+}
+
+state.chipLabels = loadChipLabels();
+state.prefabNames = loadStoredPrefabNames();
+setupDragAndDrop();
+render();
+loadBundledFiles();
+
+</script>
+</body>
+</html>
