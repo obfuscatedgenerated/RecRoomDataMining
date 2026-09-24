@@ -1259,6 +1259,9 @@ const state = {
   objects: { prefabKey: null, selectedIndex: null, limit: 200, filter: "", axis: "xz" },
   shapeCameras: new Map(),
   shapeSelection: new Map(),
+  sceneGeometry: null,
+  pendingSceneGeometry: null,
+  shapeLibrary: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -1500,9 +1503,30 @@ async function loadFiles(fileList) {
   const files = [...fileList];
   if (files.length === 0) return;
   let newDataFile = false;
+  let newSchema = false;
 
   for (const file of files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    if (isGlb(bytes)) {
+      try {
+        if (state.root) applySceneGeometry(file.name, bytes);
+        else {
+          state.pendingSceneGeometry = { fileName: file.name, bytes };
+          setStatus(`Read ${file.name}. Its shapes will be matched once the room is open.`);
+        }
+      } catch (error) {
+        setStatus(`Couldn't read ${file.name}: ${error.message}`, true);
+      }
+      continue;
+    }
+    if (/\.json$/i.test(file.name)) {
+      const library = tryParseShapeLibraryJson(bytes);
+      if (library) {
+        mergeShapeLibrary(library, true);
+        setStatus(`Added shape names and colours from ${file.name}.`);
+        continue;
+      }
+    }
     const prefabNames = tryParsePrefabCsv(file.name, bytes);
     if (prefabNames) {
       const { added, renamed } = mergePrefabNames(prefabNames);
@@ -1514,6 +1538,7 @@ async function loadFiles(fileList) {
     if (schema) {
       state.schema = schema;
       state.schemaFileName = file.name;
+      newSchema = true;
       setStatus(`Loaded schema from ${file.name}: ${schema.messages.size} message types, ${schema.enums.size} enums.`);
     } else {
       state.dataBytes = bytes;
@@ -1525,7 +1550,8 @@ async function loadFiles(fileList) {
   if (newDataFile && state.schema) {
     state.rootTypeName = state.schema.guessTypeForFileName(state.dataFileName) || state.rootTypeName;
   }
-  if (state.schema && state.dataBytes) {
+  // Only re-read the room when the room or its schema changed; extra files like Scene.glb or a CSV just re-render.
+  if (state.schema && state.dataBytes && (newDataFile || newSchema || !state.root)) {
     if (!state.rootTypeName || !state.schema.messages.has(state.rootTypeName)) {
       state.rootTypeName = state.schema.guessTypeForFileName(state.dataFileName)
         || (state.schema.messages.has("rec_room.PersistedRoomData") ? "rec_room.PersistedRoomData" : null);
@@ -1554,6 +1580,13 @@ function decodeDocument() {
       resetViews();
       const elapsed = Math.round(performance.now() - startTime);
       setStatus(`Decoded ${formatByteSize(state.dataBytes.length)} into ${state.analysis.messageCount.toLocaleString()} messages in ${elapsed} ms.`);
+      if (state.pendingSceneGeometry) {
+        const pending = state.pendingSceneGeometry;
+        state.pendingSceneGeometry = null;
+        applySceneGeometry(pending.fileName, pending.bytes);
+      } else if (state.sceneGeometry) {
+        learnShapeLibrary();
+      }
     } catch (error) {
       state.root = null;
       state.analysis = null;
@@ -1640,6 +1673,7 @@ function renderHeader() {
       fileSlot("Schema", state.schemaFileName),
       fileSlot("Data", state.dataFileName, state.dataBytes ? formatByteSize(state.dataBytes.length) : null),
       renderPrefabMenu(),
+      renderShapeMenu(),
       el("label", { class: "type-picker" },
         el("span", { class: "file-slot-role" }, "Type"),
         typeInput,
@@ -1703,6 +1737,9 @@ function renderIntro() {
       hostedSchema || Boolean(state.schemaFileName)),
     fileRow("persisted_room_data.binpb", "The room. Any other .binpb from the export also works if you pick its type.",
       state.dataFileName ? "Loaded" : "Required", Boolean(state.dataFileName)),
+    fileRow("Scene.glb", "Exact maker pen geometry and colours for the shape viewer.",
+      state.sceneGeometry ? `Loaded (${state.sceneGeometry.shapeNodes.size.toLocaleString()} shapes)` : state.pendingSceneGeometry ? "Loaded" : Object.keys(state.shapeLibrary.types).length ? "Optional, shapes already learned" : "Optional",
+      Boolean(state.sceneGeometry || state.pendingSceneGeometry)),
     fileRow("PrefabIds.csv", "Prefab names for chips and room objects.",
       hostedPrefabs ? `Included with this page (${state.bundledPrefabNames.size.toLocaleString()} names)` : prefabCount ? `${prefabCount.toLocaleString()} names saved` : "Optional",
       hostedPrefabs || prefabCount > 0),
@@ -3404,11 +3441,357 @@ function renderObjectDetail(object) {
 }
 
 // ---------------------------------------------------------------------------
-// Shape viewer: maker pen shapes drawn in 3D
+// Scene.glb: optional exact geometry for maker pen shapes
 // ---------------------------------------------------------------------------
 
-const BOX_FACES = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+const GLB_MAGIC = 0x46546c67;
+const GLB_CHUNK_JSON = 0x4e4f534a;
+const GLB_CHUNK_BIN = 0x004e4942;
+const GLB_COMPONENT_READERS = {
+  5120: (view, offset) => view.getInt8(offset),
+  5121: (view, offset) => view.getUint8(offset),
+  5122: (view, offset) => view.getInt16(offset, true),
+  5123: (view, offset) => view.getUint16(offset, true),
+  5125: (view, offset) => view.getUint32(offset, true),
+  5126: (view, offset) => view.getFloat32(offset, true),
+};
+const GLB_COMPONENT_SIZES = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
+const GLB_TYPE_SIZES = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+// Case-sensitive on purpose: containers are named SHAPE_CONTAINER_<id>, shapes Shape_RR_<Type>_<id>.
+const SHAPE_NODE_PATTERN = /^Shape_(?:RR_)?(.+)_([0-9a-fA-F]{32})$/;
+const CONTAINER_NODE_PATTERN = /_([0-9a-f]{32})$/i;
+const SHAPE_LIBRARY_STORAGE_KEY = "room-inspector:shape-library";
+
+function isGlb(bytes) {
+  return bytes.length >= 12 && new DataView(bytes.buffer, bytes.byteOffset, 12).getUint32(0, true) === GLB_MAGIC;
+}
+
+function parseGlb(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let document = null;
+  let binary = null;
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const chunkLength = view.getUint32(offset, true);
+    const chunkType = view.getUint32(offset + 4, true);
+    const chunk = bytes.subarray(offset + 8, offset + 8 + chunkLength);
+    if (chunkType === GLB_CHUNK_JSON) document = JSON.parse(new TextDecoder("utf-8").decode(chunk));
+    else if (chunkType === GLB_CHUNK_BIN) binary = chunk;
+    offset += 8 + chunkLength;
+  }
+  if (!document) throw new DecodeError("The GLB has no JSON chunk");
+  return { document, binary };
+}
+
+function readAccessor(glb, accessorIndex) {
+  const accessor = glb.document.accessors[accessorIndex];
+  const bufferView = glb.document.bufferViews[accessor.bufferView];
+  const componentSize = GLB_COMPONENT_SIZES[accessor.componentType];
+  const componentCount = GLB_TYPE_SIZES[accessor.type];
+  const readComponent = GLB_COMPONENT_READERS[accessor.componentType];
+  const stride = bufferView.byteStride || componentSize * componentCount;
+  const start = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
+  const view = new DataView(glb.binary.buffer, glb.binary.byteOffset, glb.binary.byteLength);
+  const values = new Array(accessor.count * componentCount);
+  for (let element = 0; element < accessor.count; element++) {
+    for (let component = 0; component < componentCount; component++) {
+      values[element * componentCount + component] = readComponent(view, start + element * stride + component * componentSize);
+    }
+  }
+  return values;
+}
+
+// A mesh's triangles as { positions: flat xyz array, indices, material } per primitive.
+function readMesh(glb, meshIndex) {
+  if (!glb.meshCache.has(meshIndex)) {
+    const mesh = glb.document.meshes[meshIndex];
+    const primitives = [];
+    for (const primitive of mesh.primitives || []) {
+      if ((primitive.mode ?? 4) !== 4 || primitive.attributes?.POSITION === undefined) continue;
+      const positions = readAccessor(glb, primitive.attributes.POSITION);
+      const indices = primitive.indices !== undefined
+        ? readAccessor(glb, primitive.indices)
+        : Array.from({ length: positions.length / 3 }, (unused, index) => index);
+      primitives.push({ positions, indices, material: primitive.material ?? null });
+    }
+    glb.meshCache.set(meshIndex, primitives);
+  }
+  return glb.meshCache.get(meshIndex);
+}
+
+function nodeLocalMatrix(node) {
+  if (node.matrix) {
+    const values = node.matrix;
+    return [[values[0], values[4], values[8], values[12]], [values[1], values[5], values[9], values[13]], [values[2], values[6], values[10], values[14]], [0, 0, 0, 1]];
+  }
+  const [x, y, z, w] = node.rotation || [0, 0, 0, 1];
+  const [scaleX, scaleY, scaleZ] = node.scale || [1, 1, 1];
+  const [translateX, translateY, translateZ] = node.translation || [0, 0, 0];
+  return [
+    [(1 - 2 * (y * y + z * z)) * scaleX, (2 * (x * y - z * w)) * scaleY, (2 * (x * z + y * w)) * scaleZ, translateX],
+    [(2 * (x * y + z * w)) * scaleX, (1 - 2 * (x * x + z * z)) * scaleY, (2 * (y * z - x * w)) * scaleZ, translateY],
+    [(2 * (x * z - y * w)) * scaleX, (2 * (y * z + x * w)) * scaleY, (1 - 2 * (x * x + y * y)) * scaleZ, translateZ],
+    [0, 0, 0, 1],
+  ];
+}
+
+function multiplyMatrices4(first, second) {
+  return first.map((row) => [0, 1, 2, 3].map((column) => row.reduce((sum, value, index) => sum + value * second[index][column], 0)));
+}
+
+function transformPoint4(matrix, point) {
+  return [0, 1, 2].map((row) => matrix[row][0] * point[0] + matrix[row][1] * point[1] + matrix[row][2] * point[2] + matrix[row][3]);
+}
+
+function linearToSrgb(channel) {
+  const clamped = Math.max(0, Math.min(1, channel));
+  return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
+}
+
+function materialInfo(glb, materialIndex) {
+  const material = materialIndex === null ? null : glb.document.materials?.[materialIndex];
+  if (!material) return { colorName: null, materialName: null, rgb: [0.7, 0.7, 0.7] };
+  const [colorName, ...rest] = String(material.name || "").split("_");
+  const baseColor = material.pbrMetallicRoughness?.baseColorFactor || [0.7, 0.7, 0.7, 1];
+  return { colorName: colorName || null, materialName: rest.join("_") || null, rgb: baseColor.slice(0, 3).map(linearToSrgb) };
+}
+
+function indexSceneGeometry(fileName, bytes) {
+  const glb = parseGlb(bytes);
+  glb.fileName = fileName;
+  glb.meshCache = new Map();
+  glb.shapeNodes = new Map();
+  glb.containerNodes = new Map();
+  glb.document.nodes = glb.document.nodes || [];
+  glb.document.nodes.forEach((node, nodeIndex) => {
+    const name = node.name || "";
+    const shapeMatch = SHAPE_NODE_PATTERN.exec(name);
+    if (shapeMatch) {
+      glb.shapeNodes.set(shapeMatch[2].toLowerCase(), { nodeIndex, typeName: shapeMatch[1] });
+      return;
+    }
+    const containerMatch = CONTAINER_NODE_PATTERN.exec(name);
+    if (containerMatch && node.children?.length) glb.containerNodes.set(containerMatch[1].toLowerCase(), nodeIndex);
+  });
+  return glb;
+}
+
+// Every hex form an ID might be written in: .NET Guid.ToString("N") order, and raw byte order.
+function idHexForms(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) return [];
+  const raw = bytesToHex(bytes).replace(/ /g, "");
+  const guid = bytesToGuidString(bytes);
+  return guid ? [guid.replace(/-/g, ""), raw] : [raw];
+}
+
+// ---------------------------------------------------------------------------
+// Shape library: what Scene.glb taught us, kept for rooms opened without one
+// ---------------------------------------------------------------------------
+
+function emptyShapeLibrary() {
+  return { types: {}, colors: {}, materials: {}, meshes: {}, axisSigns: null, sizeRule: null };
+}
+
+function loadShapeLibrary() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SHAPE_LIBRARY_STORAGE_KEY) || "null");
+    return stored && typeof stored === "object" ? { ...emptyShapeLibrary(), ...stored } : emptyShapeLibrary();
+  } catch (error) {
+    return emptyShapeLibrary();
+  }
+}
+
+function saveShapeLibrary() {
+  try {
+    localStorage.setItem(SHAPE_LIBRARY_STORAGE_KEY, JSON.stringify(state.shapeLibrary));
+  } catch (error) {
+    showToast("Couldn't save the shape library in this browser");
+  }
+}
+
+function mostCommon(counter) {
+  let best = null;
+  let bestCount = -1;
+  for (const [value, count] of counter) {
+    if (count > bestCount) {
+      best = value;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function median(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((first, second) => first - second);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function protoShapesWithIds() {
+  const shapes = [];
+  walkMessage(state.root, {
+    onMessage(message) {
+      if (message.typeName !== "rec_room.ShapeData") return;
+      const parsed = parseShape(message, shapes.length);
+      for (const hex of idHexForms(message.get("id"))) shapes.push({ hex, shape: parsed });
+    },
+  });
+  return shapes;
+}
+
+// Compare every shape in Scene.glb with its entry in the room data and learn what the numbers mean.
+function learnShapeLibrary() {
+  const glb = state.sceneGeometry;
+  if (!glb || !state.root) return null;
+  const typeNames = new Map();
+  const colors = new Map();
+  const materials = new Map();
+  const axisVotes = [[], [], []];
+  const sizeRatios = { aspect: [[], [], []], legacy: [[], [], []] };
+  const meshExamples = new Map();
+  let matched = 0;
+
+  for (const { hex, shape } of protoShapesWithIds()) {
+    const shapeNode = glb.shapeNodes.get(hex);
+    if (!shapeNode) continue;
+    matched++;
+    const node = glb.document.nodes[shapeNode.nodeIndex];
+    const countInto = (counter, key, value) => {
+      if (!counter.has(key)) counter.set(key, new Map());
+      const inner = counter.get(key);
+      inner.set(value, (inner.get(value) || 0) + 1);
+    };
+    countInto(typeNames, shape.type, shapeNode.typeName);
+
+    const primitives = node.mesh !== undefined ? readMesh(glb, node.mesh) : [];
+    const info = materialInfo(glb, primitives[0]?.material ?? null);
+    if (info.colorName) countInto(colors, shape.color, JSON.stringify({ name: info.colorName, rgb: info.rgb.map((channel) => Number(channel.toFixed(4))) }));
+    if (info.materialName) countInto(materials, shape.material, info.materialName);
+
+    const translation = node.translation || [0, 0, 0];
+    const protoPosition = [shape.position.x, shape.position.y, shape.position.z];
+    translation.forEach((value, axis) => {
+      if (Math.abs(value) > 0.01 && Math.abs(protoPosition[axis]) > 0.01) axisVotes[axis].push(Math.sign(value) === Math.sign(protoPosition[axis]) ? 1 : -1);
+    });
+    const nodeScale = node.scale || [1, 1, 1];
+    for (const [rule, candidate] of [["aspect", shape.sizeFromAspect], ["legacy", shape.sizeFromLegacy]]) {
+      if (!candidate) continue;
+      [candidate.x, candidate.y, candidate.z].forEach((value, axis) => {
+        if (value) sizeRatios[rule][axis].push(Math.abs(nodeScale[axis]) / Math.abs(value));
+      });
+    }
+    if (!shape.isCurve && primitives.length > 0) {
+      if (!meshExamples.has(shape.type)) meshExamples.set(shape.type, new Map());
+      const byVertexCount = meshExamples.get(shape.type);
+      const vertexCount = primitives[0].positions.length / 3;
+      if (!byVertexCount.has(vertexCount)) byVertexCount.set(vertexCount, { primitives, count: 0 });
+      byVertexCount.get(vertexCount).count++;
+    }
+  }
+  if (matched === 0) return { matched: 0 };
+
+  const library = state.shapeLibrary;
+  for (const [type, names] of typeNames) library.types[type] = { name: mostCommon(names) };
+  for (const [color, values] of colors) library.colors[color] = JSON.parse(mostCommon(values));
+  for (const [material, names] of materials) library.materials[material] = mostCommon(names);
+  library.axisSigns = axisVotes.map((votes) => (votes.reduce((sum, vote) => sum + vote, 0) < 0 ? -1 : 1));
+
+  const ruleError = (rule) => {
+    const medians = sizeRatios[rule].map(median).filter((value) => value !== null);
+    return medians.length === 3 ? Math.max(...medians.map((value) => Math.abs(value - 1))) : Infinity;
+  };
+  const bestRule = ["aspect", "legacy"].sort((first, second) => ruleError(first) - ruleError(second))[0];
+  library.sizeRule = ruleError(bestRule) < 0.05 ? bestRule : null;
+
+  // Unit meshes per type are only meaningful when the node's scale carries the shape's size.
+  if (library.sizeRule) {
+    for (const [type, byVertexCount] of meshExamples) {
+      const example = [...byVertexCount.values()].sort((first, second) => second.count - first.count)[0];
+      library.meshes[type] = example.primitives.map((primitive) => ({
+        positions: primitive.positions.map((value) => Number(value.toFixed(5))),
+        indices: primitive.indices,
+      }));
+    }
+  }
+  saveShapeLibrary();
+  return { matched, types: typeNames.size, colors: colors.size, materials: materials.size, sizeRule: library.sizeRule };
+}
+
+function applySceneGeometry(fileName, bytes) {
+  state.sceneGeometry = indexSceneGeometry(fileName, bytes);
+  const summary = learnShapeLibrary();
+  const shapeCount = state.sceneGeometry.shapeNodes.size;
+  if (!summary) {
+    setStatus(`Read ${shapeCount.toLocaleString()} shapes from ${fileName}. Open the room it came from to match them up.`);
+  } else if (summary.matched === 0) {
+    setStatus(`Read ${shapeCount.toLocaleString()} shapes from ${fileName}, but none match this room's shapes. Is it from a different room or subroom?`, true);
+  } else {
+    setStatus(`Matched ${summary.matched.toLocaleString()} shapes from ${fileName}: learned ${summary.types} shape types, ${summary.colors} colours and ${summary.materials} materials${summary.sizeRule ? "" : " (sizes didn't line up, so learned meshes aren't used without the GLB)"}.`);
+  }
+}
+
+// Names and colours only: no meshes, so it's safe to share.
+function shareableShapeLibrary() {
+  const { types, colors, materials, axisSigns, sizeRule } = state.shapeLibrary;
+  return { types, colors, materials, axisSigns, sizeRule };
+}
+
+function tryParseShapeLibraryJson(bytes) {
+  try {
+    const parsed = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+    if (parsed && typeof parsed === "object" && parsed.types && parsed.colors) return parsed;
+  } catch (error) {
+    // Not a shape library.
+  }
+  return null;
+}
+
+function mergeShapeLibrary(incoming, persist) {
+  const library = state.shapeLibrary;
+  for (const key of ["types", "colors", "materials", "meshes"]) library[key] = { ...(incoming[key] || {}), ...library[key] };
+  library.axisSigns = library.axisSigns || incoming.axisSigns || null;
+  library.sizeRule = library.sizeRule || incoming.sizeRule || null;
+  if (persist) saveShapeLibrary();
+}
+
+function renderShapeMenu() {
+  const library = state.shapeLibrary;
+  const typeCount = Object.keys(library.types).length;
+  const colorCount = Object.keys(library.colors).length;
+  return el("details", { class: "file-slot prefab-menu" },
+    el("summary", {},
+      el("span", { class: "file-slot-role" }, "Shapes"),
+      el("span", { class: "file-slot-name" }, state.sceneGeometry ? state.sceneGeometry.fileName : typeCount ? `${typeCount} types known` : "approximate")),
+    el("div", { class: "prefab-menu-panel panel" },
+      el("p", { class: "node-meta" }, state.sceneGeometry
+        ? `Drawing shapes from ${state.sceneGeometry.fileName}, the export's exact geometry.`
+        : "Open the export's Scene.glb to draw shapes exactly. It's also used to learn shape types and colours for rooms opened without one."),
+      typeCount || colorCount ? el("p", { class: "node-meta" }, `Known: ${typeCount} shape types, ${colorCount} colours, ${Object.keys(library.materials).length} materials, ${Object.keys(library.meshes).length} shape meshes.`) : null,
+      typeCount || colorCount ? el("div", { class: "decode-row" },
+        el("button", { class: "button is-small", onclick: () => copyText(JSON.stringify(shareableShapeLibrary(), null, 1), "shape names and colours") }, "Copy names and colours"),
+        el("button", {
+          class: "button is-small",
+          onclick: () => {
+            state.shapeLibrary = emptyShapeLibrary();
+            saveShapeLibrary();
+            showToast("Forgot the learned shape library");
+            render();
+          },
+        }, "Forget")) : null),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shape viewer
+// ---------------------------------------------------------------------------
+
 const SHAPE_LIGHT = normalizeVector([0.35, 0.85, 0.4]);
+const PROXY_TRIANGLE_THRESHOLD = 25000;
+const UNIT_BOX = {
+  positions: [-0.5, -0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5],
+  // Counter-clockwise seen from outside, in a right-handed frame.
+  indices: [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5],
+};
 
 function normalizeVector(vector) {
   const length = Math.hypot(...vector) || 1;
@@ -3449,7 +3832,7 @@ function toRenderSpace(unityPoint) {
   return [unityPoint[0], unityPoint[1], -unityPoint[2]];
 }
 
-function shapeColorRgb(colorIndex) {
+function inventedShapeColor(colorIndex) {
   const hue = ((colorIndex * 47) % 360) / 360;
   const saturation = 0.45;
   const lightness = 0.6;
@@ -3460,69 +3843,171 @@ function shapeColorRgb(colorIndex) {
   return [channel(0), channel(8), channel(4)];
 }
 
+function shapeColorRgb(colorIndex) {
+  return state.shapeLibrary.colors[colorIndex]?.rgb || inventedShapeColor(colorIndex);
+}
+
 function parseShape(shape, index) {
   const position = vectorOf(shape.get("current_local_position")) || { x: 0, y: 0, z: 0 };
   const rotation = vectorOf(shape.get("current_local_rotation")) || { x: 0, y: 0, z: 0 };
-  const rawScale = shape.get("scale");
-  const scale = rawScale ? rawScale : 1;
+  const scale = shape.get("scale") || 1;
   const mesh = shape.get("mesh_shape_data");
   const curve = shape.get("curve_shape_data");
-  const aspect = vectorOf(mesh?.get("aspect_ratio")) || vectorOf(mesh?.get("legacy_scale"));
-  const size = aspect && (aspect.x || aspect.y || aspect.z)
-    ? { x: (aspect.x || 1) * scale, y: (aspect.y || 1) * scale, z: (aspect.z || 1) * scale }
-    : { x: scale, y: scale, z: scale };
+  const sizeFrom = (vector) => (vector && (vector.x || vector.y || vector.z)
+    ? { x: (vector.x || 1) * scale, y: (vector.y || 1) * scale, z: (vector.z || 1) * scale }
+    : null);
+  const sizeFromAspect = sizeFrom(vectorOf(mesh?.get("aspect_ratio")));
+  const sizeFromLegacy = sizeFrom(vectorOf(mesh?.get("legacy_scale")));
+  const learnedRule = state.shapeLibrary.sizeRule;
+  const size = (learnedRule === "legacy" ? sizeFromLegacy || sizeFromAspect : sizeFromAspect || sizeFromLegacy) || { x: scale, y: scale, z: scale };
   const controlPoints = (curve?.get("control_points") || []).map((point) => ({
     position: vectorOf(point.get("position")) || { x: 0, y: 0, z: 0 },
     radius: point.get("radius") ?? 0.05,
   }));
+  const type = shape.get("shape_type") ?? 0;
+  const color = shape.get("shape_color") ?? 0;
+  const material = shape.get("shape_material") ?? 0;
+  const idHexes = idHexForms(shape.get("id"));
   return {
     index,
-    type: shape.get("shape_type") ?? 0,
-    color: shape.get("shape_color") ?? 0,
-    material: shape.get("shape_material") ?? 0,
+    key: idHexes[0] || `index-${index}`,
+    idHexes,
+    type,
+    typeName: state.shapeLibrary.types[type]?.name || null,
+    color,
+    colorName: state.shapeLibrary.colors[color]?.name || null,
+    material,
+    materialName: state.shapeLibrary.materials[material] || null,
     position,
     rotation,
     scale,
     size,
+    sizeFromAspect,
+    sizeFromLegacy,
     isCurve: controlPoints.length > 0,
     controlPoints,
-    flatShaded: curve?.get("flat_shaded") === true,
   };
 }
 
-function buildShapeScene(shapes) {
-  const boxes = [];
+function sceneFromTriangles(triangles, curves) {
+  const points = triangles.flatMap((triangle) => triangle.points);
+  for (const curve of curves) points.push(...curve.points.map((point) => point.position));
+  if (points.length === 0) return null;
+  const minimum = [0, 1, 2].map((axis) => Math.min(...points.map((point) => point[axis])));
+  const maximum = [0, 1, 2].map((axis) => Math.max(...points.map((point) => point[axis])));
+  const center = minimum.map((value, axis) => (value + maximum[axis]) / 2);
+  const radius = Math.max(Math.hypot(...subtractVectors(maximum, minimum)) / 2, 0.01);
+
+  // A cheap stand-in for dragging: one box per shape.
+  const boundsByShape = new Map();
+  for (const triangle of triangles) {
+    let bounds = boundsByShape.get(triangle.shapeKey);
+    if (!bounds) {
+      bounds = { minimum: [Infinity, Infinity, Infinity], maximum: [-Infinity, -Infinity, -Infinity], rgb: triangle.rgb };
+      boundsByShape.set(triangle.shapeKey, bounds);
+    }
+    for (const point of triangle.points) {
+      for (let axis = 0; axis < 3; axis++) {
+        bounds.minimum[axis] = Math.min(bounds.minimum[axis], point[axis]);
+        bounds.maximum[axis] = Math.max(bounds.maximum[axis], point[axis]);
+      }
+    }
+  }
+  const proxyTriangles = [];
+  for (const [shapeKey, bounds] of boundsByShape) {
+    const corner = (index) => [0, 1, 2].map((axis) => (UNIT_BOX.positions[index * 3 + axis] < 0 ? bounds.minimum[axis] : bounds.maximum[axis]));
+    for (let index = 0; index < UNIT_BOX.indices.length; index += 3) {
+      proxyTriangles.push({ points: [corner(UNIT_BOX.indices[index]), corner(UNIT_BOX.indices[index + 1]), corner(UNIT_BOX.indices[index + 2])], rgb: bounds.rgb, shapeKey });
+    }
+  }
+  return { triangles, curves, proxyTriangles, center, radius };
+}
+
+function pushTriangles(triangles, positions, indices, toWorld, reverseWinding, rgb, shapeKey) {
+  const vertex = (index) => toWorld([positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]]);
+  for (let index = 0; index + 2 < indices.length; index += 3) {
+    const first = vertex(indices[index]);
+    const second = vertex(indices[index + 1]);
+    const third = vertex(indices[index + 2]);
+    triangles.push({ points: reverseWinding ? [first, third, second] : [first, second, third], rgb, shapeKey });
+  }
+}
+
+// The GLB flips Unity's x axis and the viewer flips z; the two differ by a half turn about y, not a mirror.
+function glbToRenderSpace(point) {
+  return [-point[0], point[1], -point[2]];
+}
+
+// Exact geometry: the container's nodes in Scene.glb, turned into the viewer's frame.
+function buildGlbScene(containerMessage) {
+  const glb = state.sceneGeometry;
+  if (!glb || !(containerMessage instanceof DecodedMessage)) return null;
+  const containerIndex = idHexForms(containerMessage.get("id")).map((hex) => glb.containerNodes.get(hex)).find((index) => index !== undefined);
+  if (containerIndex === undefined) return null;
+
+  const triangles = [];
+  const visit = (nodeIndex, matrix, shapeKey) => {
+    const node = glb.document.nodes[nodeIndex];
+    const nodeShapeKey = SHAPE_NODE_PATTERN.exec(node.name || "")?.[2].toLowerCase() || shapeKey;
+    if (node.mesh !== undefined) {
+      const determinant = matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
+      for (const primitive of readMesh(glb, node.mesh)) {
+        const rgb = materialInfo(glb, primitive.material).rgb;
+        pushTriangles(triangles, primitive.positions, primitive.indices, (point) => glbToRenderSpace(transformPoint4(matrix, point)), determinant < 0, rgb, nodeShapeKey);
+      }
+    }
+    for (const childIndex of node.children || []) {
+      visit(childIndex, multiplyMatrices4(matrix, nodeLocalMatrix(glb.document.nodes[childIndex])), nodeShapeKey);
+    }
+  };
+  const identity = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+  visit(containerIndex, identity, null);
+  return triangles.length > 0 ? { ...sceneFromTriangles(triangles, []), source: "glb" } : null;
+}
+
+// From the room data: learned meshes where known, boxes otherwise, curves as tubes.
+function buildDataScene(shapes) {
+  const library = state.shapeLibrary;
+  const axisSigns = library.axisSigns || [1, 1, 1];
+  const learnedMirror = axisSigns.filter((sign) => sign < 0).length % 2 === 1;
+  const triangles = [];
   const curves = [];
-  const allPoints = [];
+  let usedLearnedMeshes = false;
   for (const shape of shapes) {
     const matrix = unityEulerMatrix(shape.rotation);
     const origin = [shape.position.x, shape.position.y, shape.position.z];
-    const toWorld = (local) => toRenderSpace(applyMatrix(matrix, local).map((component, axis) => component + origin[axis]));
+    const toUnityWorld = (local) => applyMatrix(matrix, local).map((component, axis) => component + origin[axis]);
+    const rgb = shapeColorRgb(shape.color);
     if (shape.isCurve) {
-      const points = shape.controlPoints.map((point) => ({
-        position: toWorld([point.position.x * shape.scale, point.position.y * shape.scale, point.position.z * shape.scale]),
-        radius: point.radius * shape.scale,
-      }));
-      curves.push({ shape, points });
-      allPoints.push(...points.map((point) => point.position));
+      curves.push({
+        shapeKey: shape.key,
+        rgb,
+        points: shape.controlPoints.map((point) => ({
+          position: toRenderSpace(toUnityWorld([point.position.x * shape.scale, point.position.y * shape.scale, point.position.z * shape.scale])),
+          radius: point.radius * shape.scale,
+        })),
+      });
+      continue;
+    }
+    const size = [shape.size.x, shape.size.y, shape.size.z];
+    const learnedMesh = library.sizeRule ? library.meshes[shape.type] : null;
+    if (learnedMesh) {
+      usedLearnedMeshes = true;
+      const toWorld = (point) => toRenderSpace(toUnityWorld(point.map((value, axis) => value * axisSigns[axis] * size[axis])));
+      // The z flip into render space mirrors once; learned meshes may also be mirrored by the axis signs.
+      for (const primitive of learnedMesh) pushTriangles(triangles, primitive.positions, primitive.indices, toWorld, !learnedMirror, rgb, shape.key);
     } else {
-      const half = [shape.size.x / 2, shape.size.y / 2, shape.size.z / 2];
-      const corners = [];
-      for (const signX of [-1, 1]) for (const signY of [-1, 1]) for (const signZ of [-1, 1]) {
-        corners.push(toWorld([signX * half[0], signY * half[1], signZ * half[2]]));
-      }
-      boxes.push({ shape, corners, center: toRenderSpace(origin) });
-      allPoints.push(...corners);
+      const toWorld = (point) => toRenderSpace(toUnityWorld(point.map((value, axis) => value * size[axis])));
+      pushTriangles(triangles, UNIT_BOX.positions, UNIT_BOX.indices, toWorld, true, rgb, shape.key);
     }
   }
-  const minimum = [0, 1, 2].map((axis) => Math.min(...allPoints.map((point) => point[axis])));
-  const maximum = [0, 1, 2].map((axis) => Math.max(...allPoints.map((point) => point[axis])));
-  const center = minimum.map((value, axis) => (value + maximum[axis]) / 2);
-  const radius = Math.max(Math.hypot(...subtractVectors(maximum, minimum)) / 2, 0.01);
-  return { boxes, curves, center, radius };
+  const scene = sceneFromTriangles(triangles, curves);
+  return scene ? { ...scene, source: usedLearnedMeshes ? "learned" : "approximate" } : null;
 }
 
-function drawShapeScene(canvas, scene, camera, selectedIndex) {
+function drawShapeScene(canvas, scene, camera, selectedKey, useProxy) {
   const pixelRatio = window.devicePixelRatio || 1;
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
@@ -3548,65 +4033,61 @@ function drawShapeScene(canvas, scene, camera, selectedIndex) {
     const offset = subtractVectors(point, eye);
     return [dotVectors(offset, right), dotVectors(offset, up), dotVectors(offset, forward)];
   };
-  const project = (cameraPoint) => [width / 2 + (cameraPoint[0] / cameraPoint[2]) * focal, height / 2 - (cameraPoint[1] / cameraPoint[2]) * focal];
   const near = scene.radius * 0.01;
+  const selectionColor = getComputedStyle(canvas).getPropertyValue("--selection-strong").trim() || "#3874b8";
 
-  const drawables = [];
-  for (const box of scene.boxes) {
-    const base = shapeColorRgb(box.shape.color);
-    for (const face of BOX_FACES) {
-      const points = face.map((cornerIndex) => box.corners[cornerIndex]);
-      const faceCenter = [0, 1, 2].map((axis) => points.reduce((sum, point) => sum + point[axis], 0) / 4);
-      const normal = normalizeVector(subtractVectors(faceCenter, box.center));
-      if (dotVectors(normal, subtractVectors(faceCenter, eye)) >= 0) continue;
-      const cameraPoints = points.map(toCamera);
-      if (cameraPoints.some((point) => point[2] <= near)) continue;
-      const brightness = 0.55 + 0.45 * Math.max(0, dotVectors(normal, SHAPE_LIGHT));
-      drawables.push({
-        depth: cameraPoints.reduce((sum, point) => sum + point[2], 0) / 4,
-        draw: () => {
-          context.beginPath();
-          cameraPoints.map(project).forEach(([screenX, screenY], index) => (index ? context.lineTo(screenX, screenY) : context.moveTo(screenX, screenY)));
-          context.closePath();
-          context.fillStyle = `rgb(${base.map((channel) => Math.round(channel * brightness * 255)).join(",")})`;
-          context.fill();
-          const isSelected = box.shape.index === selectedIndex;
-          context.strokeStyle = isSelected ? getComputedStyle(canvas).getPropertyValue("--selection-strong") || "#3874b8" : "rgba(0, 0, 0, 0.35)";
-          context.lineWidth = isSelected ? 2 : 0.5;
-          context.stroke();
-        },
-      });
-    }
+  const faces = [];
+  for (const triangle of useProxy ? scene.proxyTriangles : scene.triangles) {
+    const [first, second, third] = triangle.points;
+    const normal = crossVectors(subtractVectors(second, first), subtractVectors(third, first));
+    if (dotVectors(normal, subtractVectors(first, eye)) >= 0) continue;
+    const cameraPoints = triangle.points.map(toCamera);
+    if (cameraPoints[0][2] <= near || cameraPoints[1][2] <= near || cameraPoints[2][2] <= near) continue;
+    const brightness = 0.55 + 0.45 * Math.max(0, dotVectors(normalizeVector(normal), SHAPE_LIGHT));
+    faces.push({ depth: (cameraPoints[0][2] + cameraPoints[1][2] + cameraPoints[2][2]) / 3, cameraPoints, triangle, brightness });
   }
+  const segments = [];
   for (const curve of scene.curves) {
-    const base = shapeColorRgb(curve.shape.color);
     const cameraPoints = curve.points.map((point) => ({ point: toCamera(point.position), radius: point.radius }));
     for (let index = 0; index < cameraPoints.length - 1; index++) {
       const start = cameraPoints[index];
       const end = cameraPoints[index + 1];
-      if (start.point[2] <= near || end.point[2] <= near) continue;
-      const depth = (start.point[2] + end.point[2]) / 2;
-      drawables.push({
-        depth,
-        draw: () => {
-          const [startX, startY] = project(start.point);
-          const [endX, endY] = project(end.point);
-          context.beginPath();
-          context.moveTo(startX, startY);
-          context.lineTo(endX, endY);
-          context.lineCap = "round";
-          context.lineWidth = Math.max(1, ((start.radius + end.radius) * focal) / depth);
-          const isSelected = curve.shape.index === selectedIndex;
-          context.strokeStyle = isSelected ? "#3874b8" : `rgb(${base.map((channel) => Math.round(channel * 0.85 * 255)).join(",")})`;
-          context.stroke();
-        },
-      });
+      if (start.point[2] > near && end.point[2] > near) segments.push({ depth: (start.point[2] + end.point[2]) / 2, start, end, curve });
     }
   }
+  const drawables = [...faces.map((face) => ({ ...face, kind: "face" })), ...segments.map((segment) => ({ ...segment, kind: "segment" }))];
   drawables.sort((first, second) => second.depth - first.depth);
-  for (const drawable of drawables) drawable.draw();
 
-  // Axis gizmo in the corner, Unity's axes: x red, y green, z blue.
+  const project = (point) => [width / 2 + (point[0] / point[2]) * focal, height / 2 - (point[1] / point[2]) * focal];
+  for (const drawable of drawables) {
+    if (drawable.kind === "face") {
+      const [first, second, third] = drawable.cameraPoints.map(project);
+      context.beginPath();
+      context.moveTo(first[0], first[1]);
+      context.lineTo(second[0], second[1]);
+      context.lineTo(third[0], third[1]);
+      context.closePath();
+      const isSelected = drawable.triangle.shapeKey !== null && drawable.triangle.shapeKey === selectedKey;
+      const shade = drawable.triangle.rgb.map((channel) => Math.round(channel * drawable.brightness * 255));
+      context.fillStyle = isSelected ? selectionColor : `rgb(${shade.join(",")})`;
+      context.fill();
+      // A hairline in the fill colour hides the seams between triangles.
+      context.strokeStyle = context.fillStyle;
+      context.lineWidth = 0.6;
+      context.stroke();
+    } else {
+      const [startX, startY] = project(drawable.start.point);
+      const [endX, endY] = project(drawable.end.point);
+      context.beginPath();
+      context.moveTo(startX, startY);
+      context.lineTo(endX, endY);
+      context.lineCap = "round";
+      context.lineWidth = Math.max(1, ((drawable.start.radius + drawable.end.radius) * focal) / drawable.depth);
+      context.strokeStyle = drawable.curve.shapeKey === selectedKey ? selectionColor : `rgb(${drawable.curve.rgb.map((channel) => Math.round(channel * 0.85 * 255)).join(",")})`;
+      context.stroke();
+    }
+  }
+
   const gizmoOrigin = [44, height - 44];
   for (const [axis, color] of [[[1, 0, 0], "#d0453c"], [[0, 1, 0], "#3c9a3c"], [[0, 0, -1], "#3c6cd0"]]) {
     const direction = [dotVectors(axis, right), dotVectors(axis, up)];
@@ -3619,16 +4100,34 @@ function drawShapeScene(canvas, scene, camera, selectedIndex) {
   }
 }
 
+const SHAPE_SOURCE_NOTES = {
+  glb: "Exact geometry and colours from Scene.glb.",
+  learned: "Shapes and colours learned from a Scene.glb. Curves are drawn through their control points.",
+  approximate: "Approximate: solid shapes are drawn as boxes and colours are invented. Open the export's Scene.glb to draw them exactly.",
+};
+
 function renderShapeViewer(message, key) {
   const shapes = shapeMessagesOf(message).map(parseShape);
   if (shapes.length === 0) return null;
-  const scene = buildShapeScene(shapes);
+  const containerMessage = message.typeName === "rec_room.PersistenceViewData" ? message : null;
+  const scene = buildGlbScene(containerMessage) || buildDataScene(shapes);
+  if (!scene) return null;
   if (!state.shapeCameras.has(key)) state.shapeCameras.set(key, { yaw: -0.7, pitch: 0.45, distance: scene.radius * 2.6 });
   const camera = state.shapeCameras.get(key);
   const selectedIndex = state.shapeSelection.get(key) ?? null;
+  const selectedShape = selectedIndex === null ? null : shapes[selectedIndex];
+  const selectedKey = selectedShape ? (scene.source === "glb" ? selectedShape.idHexes.find((hex) => state.sceneGeometry.shapeNodes.has(hex)) || selectedShape.key : selectedShape.key) : null;
+  const heavy = scene.triangles.length > PROXY_TRIANGLE_THRESHOLD;
 
   const canvas = el("canvas", { class: "shape-canvas", role: "img", "aria-label": `${shapes.length} maker pen shapes in 3D` });
-  const redraw = () => drawShapeScene(canvas, scene, camera, state.shapeSelection.get(key) ?? null);
+  let idleTimer = null;
+  const redraw = (interactive = false) => {
+    drawShapeScene(canvas, scene, camera, selectedKey, interactive && heavy);
+    if (interactive && heavy) {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => drawShapeScene(canvas, scene, camera, selectedKey, false), 180);
+    }
+  };
   let dragStart = null;
   canvas.addEventListener("pointerdown", (event) => {
     dragStart = { x: event.clientX, y: event.clientY, yaw: camera.yaw, pitch: camera.pitch };
@@ -3638,31 +4137,38 @@ function renderShapeViewer(message, key) {
     if (!dragStart) return;
     camera.yaw = dragStart.yaw - (event.clientX - dragStart.x) * 0.01;
     camera.pitch = Math.max(-1.5, Math.min(1.5, dragStart.pitch + (event.clientY - dragStart.y) * 0.01));
-    redraw();
+    redraw(true);
   });
-  canvas.addEventListener("pointerup", () => { dragStart = null; });
+  canvas.addEventListener("pointerup", () => {
+    dragStart = null;
+    redraw(false);
+  });
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
     camera.distance = Math.max(scene.radius * 0.2, Math.min(scene.radius * 20, camera.distance * Math.exp(event.deltaY * 0.001)));
-    redraw();
+    redraw(true);
   }, { passive: false });
   canvas.addEventListener("dblclick", () => {
     Object.assign(camera, { yaw: -0.7, pitch: 0.45, distance: scene.radius * 2.6 });
-    redraw();
+    redraw(false);
   });
-  requestAnimationFrame(redraw);
-  if (typeof ResizeObserver === "function") new ResizeObserver(redraw).observe(canvas);
+  requestAnimationFrame(() => redraw(false));
+  if (typeof ResizeObserver === "function") new ResizeObserver(() => redraw(false)).observe(canvas);
 
   const selectShape = (index) => {
     state.shapeSelection.set(key, selectedIndex === index ? null : index);
     render();
   };
+  const describeShape = (shape) => {
+    if (shape.isCurve) return `${shape.typeName || "Curve"}, ${shape.controlPoints.length} points`;
+    return shape.typeName || `type ${shape.type}`;
+  };
   const rows = shapes.map((shape) => clickableRow(() => selectShape(shape.index),
     { class: shape.index === selectedIndex ? "is-highlighted" : "" },
     el("td", { class: "index-cell" }, shape.index),
-    el("td", {}, shape.isCurve ? `curve, ${shape.controlPoints.length} points` : `type ${shape.type}`),
-    el("td", {}, el("span", { class: "type-swatch", style: `background: rgb(${shapeColorRgb(shape.color).map((channel) => Math.round(channel * 255)).join(",")})` }), shape.color),
-    el("td", { class: "index-cell" }, shape.material),
+    el("td", {}, describeShape(shape)),
+    el("td", {}, el("span", { class: "type-swatch", style: `background: rgb(${shapeColorRgb(shape.color).map((channel) => Math.round(channel * 255)).join(",")})` }), shape.colorName || shape.color),
+    el("td", {}, shape.materialName || shape.material),
     el("td", {}, el("span", { class: "value kind-number" }, formatVector(shape.position))),
     el("td", {}, el("span", { class: "value kind-number" }, formatVector(shape.rotation))),
     el("td", {}, el("span", { class: "value kind-number" }, shape.isCurve ? `scale ${formatNumber(shape.scale)}` : `${formatNumber(shape.size.x)} × ${formatNumber(shape.size.y)} × ${formatNumber(shape.size.z)}`)),
@@ -3671,7 +4177,7 @@ function renderShapeViewer(message, key) {
   return el("div", { class: "shape-viewer" },
     el("div", { class: "node-header" },
       el("h2", { class: "node-title" }, `Shapes (${shapes.length})`),
-      el("span", { class: "node-meta" }, "Local to the object. Solid shapes are drawn as boxes of their size, and colours are approximate."),
+      el("span", { class: "node-meta" }, `${SHAPE_SOURCE_NOTES[scene.source]} ${scene.triangles.length.toLocaleString()} triangles.`),
     ),
     el("div", { class: "shape-canvas-frame" }, canvas, el("div", { class: "circuit-hint" }, "Drag to rotate, scroll to zoom, double-click to reset")),
     el("div", { class: "scroll-x table-scroll" }, el("table", { class: "data" },
@@ -3850,6 +4356,7 @@ function render() {
 // Tried in order, relative to this page. Override with ?schema=, ?prefabs= and ?data= in the page URL.
 const BUNDLED_SCHEMA_PATHS = ["descriptor_set.binpb", "schema/descriptor_set.binpb", "data/descriptor_set.binpb"];
 const BUNDLED_PREFAB_PATHS = ["prefab_registry.csv", "data/prefab_registry.csv", "prefabs/prefab_registry.csv"];
+const BUNDLED_SHAPE_LIBRARY_PATHS = ["shape_library.json", "data/shape_library.json"];
 
 async function fetchFirstAvailable(paths) {
   for (const path of paths) {
@@ -3888,6 +4395,13 @@ async function loadBundledFiles() {
       state.bundledSources.prefabs = prefabFile.path;
       loaded.push(`${names.size.toLocaleString()} prefab names`);
     }
+  }
+
+  const shapeLibraryFile = await fetchFirstAvailable(BUNDLED_SHAPE_LIBRARY_PATHS);
+  const bundledShapeLibrary = shapeLibraryFile ? tryParseShapeLibraryJson(shapeLibraryFile.bytes) : null;
+  if (bundledShapeLibrary) {
+    mergeShapeLibrary(bundledShapeLibrary, false);
+    loaded.push("shape names and colours");
   }
 
   if (parameters.get("data")) {
@@ -3934,6 +4448,7 @@ function setupDragAndDrop() {
 
 state.chipLabels = loadChipLabels();
 state.prefabNames = loadStoredPrefabNames();
+state.shapeLibrary = loadShapeLibrary();
 setupDragAndDrop();
 render();
 loadBundledFiles();
