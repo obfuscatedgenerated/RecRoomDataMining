@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/deprecated/DEPRECATED_circuit_type_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message DEPRECATED_NodePortData {
+  bytes port_id = 1;
+  string portName = 2;
+  .circuits_v2.DEPRECATED_CircuitTypeData generic_port_type = 3;
+}

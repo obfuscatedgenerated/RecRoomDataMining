@@ -43,7 +43,11 @@ Where a name came from an export, the `Type` column uses it. Otherwise `Type` is
 
 ### `schema/`
 
-`descriptor_set.binpb` is the protobuf schema shipped in every Rec Room data export. It describes the format of all the export's `.binpb` files. `schema.proto` holds the same schema as a textual `.proto` file, generated with `tools/descriptor_to_proto.py`.
+`descriptor_set.binpb` is the protobuf schema shipped in every Rec Room data export. It describes the format of all the export's `.binpb` files.
+
+### `proto/`
+
+This directory holds all proto files decompiled from the descriptor set, as well as a combined version.
 
 ## Tools
 

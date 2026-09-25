@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits/shared/api/id_128_data.proto";
+import "core/guid_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message CircuitGraphToolMappingRegistryData {
+  repeated .circuits_v2.CircuitGraphToolMappingRegistryEntryData mapping_entries = 1;
+}
+
+message CircuitGraphToolMappingRegistryEntryData {
+  .circuits.Id128Data circuit_graph_id = 1;
+  .core.GuidData tool_mapping_id = 2;
+}

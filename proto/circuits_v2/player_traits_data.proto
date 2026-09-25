@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits/static/ev/variant_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message PlayerTraitsData {
+  repeated .circuits.VariantData trait_values = 1;
+}

@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package rec_room;
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message MessageData {
+  enum LocalizableState {
+    Disabled = 0;
+    Off = 1;
+    On = 2;
+  }
+  string message = 1;
+  repeated string messages = 2;
+  .rec_room.MessageData.LocalizableState localize = 3;
+}

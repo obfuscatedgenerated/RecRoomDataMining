@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "rec_room/avatars/full_body_animation_override.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message RequestAvatarLocomotionAnimationData {
+  .rec_room.FullBodyAnimationOverride full_body_animation = 1;
+}

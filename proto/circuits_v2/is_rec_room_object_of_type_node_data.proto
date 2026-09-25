@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits/static/ev/circuit_type_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message IsRecRoomObjectOfTypeNodeData {
+  .circuits.CircuitTypeData target_type = 1;
+}

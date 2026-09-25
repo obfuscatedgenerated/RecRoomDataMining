@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/room_mood_background_objects_type_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message BackgroundObjectsConstantNodeData {
+  repeated .circuits_v2.RoomMoodBackgroundObjectsTypeData background_objects_data = 1;
+}

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/circuit_signal_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message InputPortData {
+  .circuits_v2.CircuitSignalData default_signal_value = 2;
+  bytes DEPRECATED_desc_id = 1;
+}

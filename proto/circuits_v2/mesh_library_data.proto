@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/mesh_library_record_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message MeshLibraryData {
+  repeated .circuits_v2.MeshLibraryRecordData records = 1;
+}

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "core/guid_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message CurrencyRewardData {
+  .core.GuidData currency_id = 1;
+  int32 quantity = 2;
+}

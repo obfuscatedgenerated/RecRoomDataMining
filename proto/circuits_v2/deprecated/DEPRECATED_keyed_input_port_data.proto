@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/input_port_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message DEPRECATED_KeyedInputPortData {
+  bytes key = 1;
+  .circuits_v2.InputPortData value = 2;
+}

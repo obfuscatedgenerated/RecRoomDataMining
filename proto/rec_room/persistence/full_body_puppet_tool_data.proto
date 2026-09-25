@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package rec_room;
+
+import "rec_room/persistence/deprecated/DEPRECATED_outfit_data.proto";
+import "rec_room/persistence/avatar_data.proto";
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message FullBodyPuppetToolData {
+  .rec_room.DEPRECATED_OutfitData deprecated_outfit_data = 1;
+  bool is_avatar_in_bean_mode = 2;
+  .rec_room.AvatarData avatar_data = 3;
+}

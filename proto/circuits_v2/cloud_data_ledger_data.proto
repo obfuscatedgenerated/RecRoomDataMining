@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/deprecated/DEPRECATED_cloud_data_ledger_version.proto";
+import "circuits_v2/cloud_data_ledger_entry_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message CloudDataLedgerData {
+  repeated .circuits_v2.CloudDataLedgerEntryData bools = 2;
+  repeated .circuits_v2.CloudDataLedgerEntryData floats = 3;
+  repeated .circuits_v2.CloudDataLedgerEntryData ints = 4;
+  repeated .circuits_v2.CloudDataLedgerEntryData quaternions = 5;
+  repeated .circuits_v2.CloudDataLedgerEntryData strings = 6;
+  repeated .circuits_v2.CloudDataLedgerEntryData vector3s = 7;
+  repeated .circuits_v2.CloudDataLedgerEntryData colors = 8;
+  repeated .circuits_v2.CloudDataLedgerEntryData rec_net_image = 16;
+  repeated .circuits_v2.CloudDataLedgerEntryData rec_net_meshes = 18;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_bools = 9;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_floats = 10;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_ints = 11;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_quaternions = 12;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_strings = 13;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_vector3s = 14;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_colors = 15;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_rec_net_image = 17;
+  repeated .circuits_v2.CloudDataLedgerEntryData list_rec_net_meshes = 19;
+  .circuits_v2.DEPRECATED_CloudDataLedgerVersion DEPRECATED_Version = 1;
+}

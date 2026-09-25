@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package rec_room;
+
+import "rec_room/player_roles/player_game_role_data.proto";
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message GameRoleNodeData {
+  .rec_room.PlayerGameRoleData game_role = 1;
+}

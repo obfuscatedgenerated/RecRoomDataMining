@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/circuits_player_event_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message ConstantPlayerEventNodeData {
+  bool has_player_event = 1;
+  .circuits_v2.CircuitsPlayerEventData player_event = 2;
+}

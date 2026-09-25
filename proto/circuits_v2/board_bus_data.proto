@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/deprecated/DEPRECATED_keyed_node_desc_data.proto";
+import "circuits_v2/node_desc_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message BoardBusData {
+  repeated .circuits_v2.NodeDescData node_descs = 2;
+  repeated .circuits_v2.DEPRECATED_KeyedNodeDescData DEPRECATED_node_descs = 1;
+}

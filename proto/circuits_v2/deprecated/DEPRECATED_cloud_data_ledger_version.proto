@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+enum DEPRECATED_CloudDataLedgerVersion {
+  option allow_alias = true;
+  V0NewCloudDataLedgerVersion = 0;
+  V1TypesInEntries = 1;
+  LatestCloudDataLedgerVersion = 1;
+}

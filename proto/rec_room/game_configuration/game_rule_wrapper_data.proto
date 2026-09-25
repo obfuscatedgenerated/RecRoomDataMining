@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package rec_room;
+
+import "rec_room/game_configuration/charades_coop_classic_game_rule_data.proto";
+import "rec_room/game_configuration/charades_team_lightning_game_rule_data.proto";
+import "rec_room/game_configuration/dodgeball_game_rule_data.proto";
+import "rec_room/game_configuration/laser_tag_game_rule_data.proto";
+import "rec_room/game_configuration/paddleball_game_rule_data.proto";
+import "rec_room/game_configuration/paintball_capture_the_flag_game_rule_data.proto";
+import "rec_room/game_configuration/paintball_team_battle_game_rule_data.proto";
+import "rec_room/game_configuration/soccer_game_rule_data.proto";
+import "rec_room/game_configuration/stuntrunner_game_rule_data.proto";
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message GameRuleWrapperData {
+  .rec_room.CharadesCoOpClassicGameRuleData charades_coop_classic_game_rule_data = 1;
+  .rec_room.CharadesTeamLightningGameRuleData charades_team_lightning_game_rule_data = 2;
+  .rec_room.DodgeballGameRuleData dodgeball_game_rule_data = 3;
+  .rec_room.LaserTagGameRuleData laser_tag_game_rule_data = 4;
+  .rec_room.PaddleballGameRuleData paddleball_game_rule_data = 5;
+  .rec_room.PaintballCaptureTheFlagGameRuleData paintball_capture_the_flag_game_rule_data = 6;
+  .rec_room.PaintballTeamBattleGameRuleData paintball_team_battle_game_rule_data = 7;
+  .rec_room.SoccerGameRuleData soccer_game_rule_data = 9;
+  .rec_room.StuntrunnerGameRuleData stuntrunner_game_rule_data = 10;
+}

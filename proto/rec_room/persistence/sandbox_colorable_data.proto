@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package rec_room;
+
+import "core/color_data.proto";
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message SandboxColorableData {
+  int32 color = 1;
+  int32 material = 2;
+  .core.ColorData rgbcolor = 3;
+  float texture_size = 4;
+  string image_name = 5;
+  bool image_tileable = 6;
+}

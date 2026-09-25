@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "core/guid_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message OrphanData {
+  int32 idx = 1;
+  .core.GuidData guid = 2;
+}

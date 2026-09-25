@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package circuits;
+
+import "circuits/static/rec_room/rr_static_state_sys_data.proto";
+import "circuits/static/rec_room/version.proto";
+
+option csharp_namespace = "Circuits.Static.RecRoom.Protobuf";
+
+message RootData {
+  .circuits.Version version = 1;
+  .circuits.RRStaticStateSysData rr_static_state_sys = 2;
+}

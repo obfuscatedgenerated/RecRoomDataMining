@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/node_desc_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+enum MessageTargetPlayers {
+  LocalPlayer = 0;
+  OtherPlayers = 1;
+  RoomAuthorityPlayer = 2;
+  AllPlayers = 3;
+  SpecificPlayer = 4;
+  ScopedObjectAuthorityPlayer = 5;
+}
+
+enum MessageReceiverScope {
+  EntireRoom = 0;
+  SpecificObject = 1;
+}
+
+message MessageSenderNodeData {
+  .circuits_v2.NodeDescData node_desc = 1;
+  string messsage_name = 2;
+  .circuits_v2.MessageTargetPlayers target_players = 3;
+  .circuits_v2.MessageReceiverScope receiver_scope = 4;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package rec_room;
+
+import "core/vector3_data.proto";
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message SandboxDeformationData {
+  .core.Vector3Data deformation = 1;
+}

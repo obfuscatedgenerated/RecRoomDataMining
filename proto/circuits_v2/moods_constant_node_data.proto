@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "core/guid_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message MoodsConstantNodeData {
+  string name = 1;
+  bool synced = 2;
+  int32 blend_time = 3;
+  int32 role_filter_mode = 4;
+  repeated .core.GuidData filtered_roles = 5;
+  bool easeIn = 6;
+}

@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package rec_room;
+
+import "core/vector3_data.proto";
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message ShapeContainerDataCollectionData {
+  message ShapeContainerDataCollectionEntryData {
+    int32 photon_view_id = 1;
+    .rec_room.ShapeDataCollectionData shapes = 2;
+    bool unchanged = 4;
+    int32 revision = 5;
+  }
+  repeated .rec_room.ShapeContainerDataCollectionData.ShapeContainerDataCollectionEntryData shape_containers = 1;
+}
+
+message ShapeContainerData {
+  .rec_room.ShapeDataCollectionData shape_collection = 1;
+  int32 physics_mode = 2;
+  bool can_modify_with_circuits = 3;
+  bool optimize_colliders = 4;
+}
+
+message ShapeDataCollectionData {
+  repeated .rec_room.ShapeData shapes = 1;
+}
+
+message ShapeData {
+  int32 shape_type = 1;
+  int32 shape_color = 2;
+  int32 shape_material = 18;
+  .core.Vector3Data DEPRECATED_initial_local_position = 5;
+  .core.Vector3Data DEPRECATED_initial_local_rotation = 6;
+  .core.Vector3Data current_local_position = 7;
+  .core.Vector3Data current_local_rotation = 8;
+  .core.Vector3Data DEPRECATED_scale_non_uniform = 9;
+  bool use_uncompressed_rotation = 10;
+  float density = 11;
+  bytes id = 12;
+  float scale = 13;
+  .core.Vector3Data uv_offset = 14;
+  float uv_scale = 15;
+  int32 config_flags = 19;
+  oneof typeData {
+    .rec_room.MeshShapeData mesh_shape_data = 16;
+    .rec_room.CurveShapeData curve_shape_data = 17;
+  }
+}
+
+message MeshShapeData {
+  .core.Vector3Data legacy_scale = 1;
+  .core.Vector3Data aspect_ratio = 2;
+}
+
+message CurveShapeData {
+  repeated .rec_room.ControlPointData control_points = 1;
+  bool flat_shaded = 2;
+  float tube_height_scale = 3;
+  int32 tube_ring_points = 4;
+  bool new_end_cap_style = 5;
+}
+
+message ControlPointData {
+  .core.Vector3Data position = 1;
+  .core.Vector3Data normal = 2;
+  float radius = 3;
+}

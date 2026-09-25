@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "core/guid_data.proto";
+import "circuits_v2/currency_reward_data.proto";
+import "circuits_v2/consumable_reward_data.proto";
+import "circuits_v2/key_reward_data.proto";
+import "circuits_v2/room_inventory_item_reward_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message RewardData {
+  string name = 1;
+  string description = 2;
+  .core.GuidData id = 3;
+  oneof image_data {
+    int32 image_index = 4;
+    string image_name = 5;
+  }
+  oneof data {
+    .circuits_v2.CurrencyRewardData currency_reward = 6;
+    .circuits_v2.ConsumableRewardData consumable_reward = 7;
+    .circuits_v2.KeyRewardData key_reward = 8;
+    .circuits_v2.RoomInventoryItemRewardData room_inventory_item_reward = 9;
+  }
+}

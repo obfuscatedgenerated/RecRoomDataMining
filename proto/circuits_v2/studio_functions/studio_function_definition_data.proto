@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits/shared/api/id_128_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message StudioFunctionDefinitionData {
+  .circuits.Id128Data prefab_id = 1;
+  string prefab_name = 2;
+  int32 studio_function_index = 3;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "core/guid_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message InventoryItemEquipmentSlotsData {
+  repeated .core.GuidData inventory_item_slot_entries = 1;
+}

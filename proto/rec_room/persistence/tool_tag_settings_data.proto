@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package rec_room;
+
+import "rec_room/tag_data.proto";
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+message ToolTagSettingsData {
+  .rec_room.TagData runtime_tag_data = 1;
+}

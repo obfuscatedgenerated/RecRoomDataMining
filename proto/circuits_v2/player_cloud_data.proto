@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits/static/ev/variant_data.proto";
+import "circuits_v2/persisted_value.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message PlayerCloudData {
+  repeated .circuits_v2.PersistedValue bools = 1;
+  repeated .circuits_v2.PersistedValue floats = 2;
+  repeated .circuits_v2.PersistedValue ints = 3;
+  repeated .circuits_v2.PersistedValue quaternions = 4;
+  repeated .circuits_v2.PersistedValue strings = 5;
+  repeated .circuits_v2.PersistedValue vector3s = 6;
+  repeated .circuits_v2.PersistedValue colors = 7;
+  repeated .circuits_v2.PersistedValue rec_net_image = 16;
+  repeated .circuits_v2.PersistedValue rec_net_meshes = 18;
+  repeated .circuits.VariantData reference_objects = 8;
+  repeated .circuits_v2.PersistedValue list_bools = 9;
+  repeated .circuits_v2.PersistedValue list_floats = 10;
+  repeated .circuits_v2.PersistedValue list_ints = 11;
+  repeated .circuits_v2.PersistedValue list_quaternions = 12;
+  repeated .circuits_v2.PersistedValue list_strings = 13;
+  repeated .circuits_v2.PersistedValue list_vector3s = 14;
+  repeated .circuits_v2.PersistedValue list_colors = 15;
+  repeated .circuits_v2.PersistedValue list_rec_net_image = 17;
+  repeated .circuits_v2.PersistedValue list_rec_net_meshes = 19;
+}

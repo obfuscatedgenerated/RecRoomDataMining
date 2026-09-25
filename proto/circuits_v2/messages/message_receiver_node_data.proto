@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package circuits_v2;
+
+import "circuits_v2/node_desc_data.proto";
+
+option csharp_namespace = "CircuitsV2.Protobuf";
+
+message MessageReceiverNodeData {
+  .circuits_v2.NodeDescData node_desc = 1;
+  string message_name = 2;
+}

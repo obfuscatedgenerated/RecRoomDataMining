@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package rec_room;
+
+option csharp_namespace = "RecRoom.Protobuf";
+
+enum SuperRoomVersion {
+  option allow_alias = true;
+  V0NewSuperRoomVersion = 0;
+  V1StronglyTypedCloudDataLedger = 1;
+  V2CloudDataLedgerVersioningRemoved = 2;
+  V3ProgressionData = 3;
+  V4ProgressionConfigurationData = 4;
+  LatestSuperRoomVersion = 4;
+}
